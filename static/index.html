@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>WebAR Image Tracking</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+            height: 100dvh;
+        }
+
+        .container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        #videoElement {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        #threeCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 2;
+            pointer-events: none;
+            /* Width/height set by JS to match video */
+        }
+
+        /* Detection badge */
+        .detection-badge {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            background: rgba(0, 200, 100, 0.9);
+            color: #000;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .detection-badge.visible {
+            opacity: 1;
+        }
+
+        /* Toggle button */
+        .toggle-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 20px;
+            z-index: 20;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            color: #fff;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .toggle-btn:active {
+            transform: scale(0.95);
+        }
+
+        .toggle-btn.active {
+            background: rgba(0, 200, 100, 0.8);
+        }
+
+        /* Start overlay */
+        .start-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            background: rgba(0, 0, 0, 0.95);
+        }
+
+        .start-overlay.hidden {
+            display: none;
+        }
+
+        .start-btn {
+            padding: 15px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            border: none;
+            border-radius: 30px;
+            background: linear-gradient(135deg, #00c870, #00a060);
+            color: #fff;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .start-btn:active {
+            transform: scale(0.95);
+        }
+
+        .start-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .start-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: #00c870;
+        }
+
+        .start-subtitle {
+            color: #888;
+            font-size: 14px;
+            text-align: center;
+            max-width: 280px;
+        }
+
+        .permission-status {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .permission-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .permission-item.granted {
+            color: #00c870;
+        }
+
+        .permission-item.denied {
+            color: #ff4444;
+        }
+
+        /* Info panel */
+        .info-panel {
+            position: absolute;
+            bottom: 100px;
+            left: 20px;
+            right: 20px;
+            z-index: 15;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 15px;
+            display: none;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        .info-panel.visible {
+            display: block;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: #888;
+        }
+
+        .info-value {
+            color: #00c870;
+            font-weight: 600;
+            font-family: monospace;
+        }
+
+        .info-section {
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            padding-top: 8px;
+            margin-top: 8px;
+        }
+
+        .info-section-title {
+            color: #fff;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        /* Status dot */
+        .status-dot {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff4444;
+        }
+
+        .status-dot.connected {
+            background: #00c870;
+        }
+
+        /* Alignment tool link */
+        .alignment-link {
+            position: absolute;
+            bottom: 30px;
+            left: 20px;
+            z-index: 20;
+            padding: 10px 16px;
+            border-radius: 25px;
+            border: none;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            color: #fff;
+            font-size: 12px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .alignment-link:hover {
+            background: rgba(0, 200, 100, 0.8);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <video id="videoElement" autoplay playsinline muted></video>
+        <canvas id="threeCanvas"></canvas>
+
+        <div class="status-dot" id="statusDot"></div>
+        <div class="detection-badge" id="detectionBadge">Target Detected</div>
+
+        <button class="toggle-btn" id="toggleBtn">ℹ️</button>
+        <a href="/static/alignment-tool/index.html" class="alignment-link">🎯 Alignment</a>
+
+        <div class="info-panel" id="infoPanel">
+            <div class="info-row">
+                <span class="info-label">Status</span>
+                <span class="info-value" id="infoStatus">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">FPS</span>
+                <span class="info-value" id="infoFps">0</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Inliers</span>
+                <span class="info-value" id="infoInliers">0</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Confidence</span>
+                <span class="info-value" id="infoConfidence">0%</span>
+            </div>
+
+            <div class="info-section">
+                <div class="info-section-title">📷 Camera</div>
+                <div class="info-row">
+                    <span class="info-label">Resolution</span>
+                    <span class="info-value" id="infoCamRes">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">FOV</span>
+                    <span class="info-value" id="infoCamFov">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">fx, fy</span>
+                    <span class="info-value" id="infoCamFocal">-</span>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <div class="info-section-title">📍 6DoF Pose</div>
+                <div class="info-row">
+                    <span class="info-label">Position</span>
+                    <span class="info-value" id="infoPosePos">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Rotation</span>
+                    <span class="info-value" id="infoPoseRot">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Distance</span>
+                    <span class="info-value" id="infoPoseDist">-</span>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <div class="info-section-title">📱 IMU Sensors</div>
+                <div class="info-row">
+                    <span class="info-label">Status</span>
+                    <span class="info-value" id="infoImuStatus">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Alpha (Z)</span>
+                    <span class="info-value" id="infoImuAlpha">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Beta (X)</span>
+                    <span class="info-value" id="infoImuBeta">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Gamma (Y)</span>
+                    <span class="info-value" id="infoImuGamma">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Rotation Δ</span>
+                    <span class="info-value" id="infoImuDelta">-</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="start-overlay" id="startOverlay">
+            <div class="start-title">🎯 WebAR SDK</div>
+            <div class="start-subtitle" id="startStatus">Initializing...</div>
+            <div class="permission-status" id="permissionStatus">
+                <div class="permission-item" id="permCamera">⏳ Camera</div>
+                <div class="permission-item" id="permMotion">⏳ Motion Sensors</div>
+                <div class="permission-item" id="permServer">⏳ Server Connection</div>
+            </div>
+            <button class="start-btn" id="startBtn" disabled>Start AR Experience</button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="/static/js/camera.js"></script>
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/camera-intrinsics.js"></script>
+    <script src="/static/js/device-motion.js"></script>
+    <script src="/static/js/model-renderer.js"></script>
+    <script>
+        /**
+         * WebAR Application
+         * High-end 6DoF image tracking with proper camera intrinsics
+         */
+        class WebARApp {
+            constructor() {
+                // Managers
+                this.intrinsicsManager = new CameraIntrinsicsManager();
+                this.cameraManager = new CameraManager();
+                this.wsManager = new WebSocketManager();
+                this.modelRenderer = new ModelRenderer('threeCanvas');
+                this.imuManager = new DeviceMotionManager();
+
+                // DOM elements
+                this.video = document.getElementById('videoElement');
+                this.statusDot = document.getElementById('statusDot');
+                this.badge = document.getElementById('detectionBadge');
+                this.panel = document.getElementById('infoPanel');
+                this.toggleBtn = document.getElementById('toggleBtn');
+                this.startOverlay = document.getElementById('startOverlay');
+                this.startBtn = document.getElementById('startBtn');
+                this.startStatus = document.getElementById('startStatus');
+
+                // State
+                this.running = false;
+                this.showInfo = false;
+                this.waiting = false;
+                this.lastSend = 0;
+                this.pose = null;
+                this.debug = {};
+
+                // FPS tracking
+                this.fps = 0;
+                this.frameCount = 0;
+                this.lastFpsTime = performance.now();
+
+                // Initialize
+                this.cameraManager.setVideoElement(this.video);
+                this.setupEvents();
+                this.init();
+            }
+
+            async init() {
+                this.startStatus.textContent = 'Requesting permissions...';
+
+                // 1. Request camera permission (this must happen first from user gesture context)
+                const permissions = await this.intrinsicsManager.requestAllPermissions();
+
+                // 2. Request IMU permission separately (must be from user gesture on iOS)
+                // We'll request this during the start button click
+                this.updatePermissionUI(permissions);
+
+                // 3. Connect to backend
+                this.startStatus.textContent = 'Connecting to server...';
+                this.connectWebSocket();
+            }
+
+            updatePermissionUI(permissions) {
+                const camEl = document.getElementById('permCamera');
+                const motionEl = document.getElementById('permMotion');
+
+                if (permissions.camera) {
+                    camEl.textContent = '✓ Camera';
+                    camEl.classList.add('granted');
+                } else {
+                    camEl.textContent = '✗ Camera (required)';
+                    camEl.classList.add('denied');
+                }
+
+                if (permissions.motion || permissions.orientation) {
+                    motionEl.textContent = '✓ Motion Sensors';
+                    motionEl.classList.add('granted');
+                } else {
+                    motionEl.textContent = '○ Motion Sensors (optional)';
+                }
+            }
+
+            setupEvents() {
+                this.startBtn.addEventListener('click', () => this.start());
+
+                this.toggleBtn.addEventListener('click', () => {
+                    this.showInfo = !this.showInfo;
+                    this.panel.classList.toggle('visible', this.showInfo);
+                    this.toggleBtn.classList.toggle('active', this.showInfo);
+                });
+
+                // Handle resize
+                window.addEventListener('resize', () => this.handleResize());
+            }
+
+            connectWebSocket() {
+                const serverEl = document.getElementById('permServer');
+
+                this.wsManager.onConnect(() => {
+                    this.statusDot.classList.add('connected');
+                    serverEl.textContent = '✓ Server Connected';
+                    serverEl.classList.add('granted');
+                });
+
+                this.wsManager.onDisconnect(() => {
+                    this.statusDot.classList.remove('connected');
+                    serverEl.textContent = '✗ Server Disconnected';
+                    serverEl.classList.remove('granted');
+                    serverEl.classList.add('denied');
+                });
+
+                this.wsManager.onStatus((data) => {
+                    if (data.ready) {
+                        this.startStatus.textContent = 'Ready to start';
+                        this.startBtn.disabled = false;
+                    }
+                });
+
+                this.wsManager.onResult((data) => this.handleResult(data));
+                this.wsManager.onError(() => {
+                    this.waiting = false;
+                });
+
+                this.wsManager.connect();
+            }
+
+            handleResult(data) {
+                this.waiting = false;
+                this.debug = data.debug || {};
+
+                if (data.detected && data.pose) {
+                    this.pose = data.pose;
+                    this.badge.classList.add('visible');
+
+                    // Set IMU reference on first detection (for stability tracking)
+                    if (this.imuManager.isActive && !this.imuManager.hasReference) {
+                        this.imuManager.setReference();
+                        console.log('[App] IMU reference set on first detection');
+                    }
+
+                    // Update 3D renderer with 6DoF pose
+                    // Model is fixed at world origin, camera moves around it
+                    this.modelRenderer.updatePose(data.pose);
+                } else {
+                    this.pose = null;
+                    this.badge.classList.remove('visible');
+                    this.modelRenderer.hide();
+
+                    // Reset pose smoothing when tracking is lost
+                    this.modelRenderer.resetPose();
+
+                    // Clear IMU reference when tracking is lost
+                    if (this.imuManager.hasReference) {
+                        this.imuManager.clearReference();
+                        console.log('[App] IMU reference cleared - tracking lost');
+                    }
+                }
+
+                this.updateInfoPanel();
+            }
+
+            async start() {
+                try {
+                    // Request IMU permission first (MUST be in user gesture handler for iOS)
+                    this.startStatus.textContent = 'Requesting motion sensors...';
+                    const imuGranted = await this.imuManager.requestPermission();
+
+                    // Update permission UI for IMU
+                    const motionEl = document.getElementById('permMotion');
+                    if (imuGranted) {
+                        motionEl.textContent = '✓ Motion Sensors';
+                        motionEl.classList.add('granted');
+                        motionEl.classList.remove('denied');
+                        console.log('[App] IMU permission granted');
+
+                        // Connect IMU manager to renderer for sensor fusion
+                        this.modelRenderer.setIMUManager(this.imuManager);
+                    } else {
+                        motionEl.textContent = '✗ Motion Sensors';
+                        motionEl.classList.add('denied');
+                        console.log('[App] IMU permission denied or not available');
+                    }
+
+                    this.startStatus.textContent = 'Starting camera...';
+
+                    // Start camera with optimal settings
+                    await this.cameraManager.start();
+
+                    // Wait for video to be ready
+                    await new Promise((resolve) => {
+                        if (this.video.videoWidth > 0) {
+                            resolve();
+                        } else {
+                            this.video.addEventListener('loadedmetadata', resolve, { once: true });
+                        }
+                    });
+
+                    // CRITICAL: Initialize canonical intrinsics from actual video resolution
+                    // This is the ONE place where FOV is computed and locked
+                    this.intrinsicsManager.initializeFromVideoStream(
+                        this.video.videoWidth,
+                        this.video.videoHeight
+                    );
+
+                    // Get intrinsics (now properly initialized)
+                    const intrinsics = this.intrinsicsManager.getCanonicalIntrinsics();
+
+                    // Set intrinsics on renderer - FOV will be locked here
+                    this.modelRenderer.setIntrinsics({
+                        fovVertical: intrinsics.fovVertical,
+                        fingerprint: this.intrinsicsManager.getFingerprint()
+                    });
+
+                    // Resize renderer to match display
+                    this.handleResize();
+
+                    // Update camera info display
+                    document.getElementById('infoCamRes').textContent =
+                        `${this.video.videoWidth}x${this.video.videoHeight}`;
+                    document.getElementById('infoCamFov').textContent =
+                        `H:${intrinsics.fovHorizontal.toFixed(1)}° V:${intrinsics.fovVertical.toFixed(1)}°`;
+                    document.getElementById('infoCamFocal').textContent =
+                        `${intrinsics.fx.toFixed(0)}, ${intrinsics.fy.toFixed(0)}`;
+
+                    // Hide overlay and start loop
+                    this.running = true;
+                    this.startOverlay.classList.add('hidden');
+                    this.loop();
+
+                    console.log('[App] AR started with locked FOV:', intrinsics.fovVertical.toFixed(1) + '°');
+
+                } catch (e) {
+                    console.error('Start failed:', e);
+                    this.startStatus.textContent = 'Failed: ' + e.message;
+                }
+            }
+
+            handleResize() {
+                if (!this.video.videoWidth) return;
+
+                // Get display dimensions
+                const rect = this.video.getBoundingClientRect();
+
+                // Resize 3D renderer
+                this.modelRenderer.resize(rect.width, rect.height);
+            }
+
+            loop() {
+                if (!this.running) return;
+                requestAnimationFrame(() => this.loop());
+
+                // Render 3D
+                this.modelRenderer.render();
+
+                // Send frame to backend
+                const now = performance.now();
+                if (!this.waiting && now - this.lastSend > 100) {  // 10 FPS to backend
+                    this.sendFrame();
+                    this.lastSend = now;
+                }
+
+                // FPS counter
+                this.frameCount++;
+                if (now - this.lastFpsTime > 1000) {
+                    this.fps = this.frameCount;
+                    this.frameCount = 0;
+                    this.lastFpsTime = now;
+                }
+            }
+
+            sendFrame() {
+                if (!this.video.videoWidth) return;
+
+                // Create canvas for frame
+                const canvas = document.createElement('canvas');
+
+                // Scale down for network efficiency (max 640px)
+                const maxDim = 640;
+                const scale = Math.min(1, maxDim / Math.max(this.video.videoWidth, this.video.videoHeight));
+                canvas.width = Math.floor(this.video.videoWidth * scale);
+                canvas.height = Math.floor(this.video.videoHeight * scale);
+
+                // Draw video frame
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(this.video, 0, 0, canvas.width, canvas.height);
+
+                // Get intrinsics for this frame size
+                const intrinsics = this.intrinsicsManager.getIntrinsicsForFrame(canvas.width, canvas.height);
+
+                // Send with intrinsics
+                const frameData = canvas.toDataURL('image/jpeg', 0.7);
+
+                if (this.wsManager.sendFrameWithIntrinsics) {
+                    this.wsManager.sendFrameWithIntrinsics(frameData, intrinsics);
+                } else {
+                    this.wsManager.sendFrame(frameData);
+                }
+
+                this.waiting = true;
+            }
+
+            updateInfoPanel() {
+                // Show tracking state with color coding
+                const state = this.debug.state || 'SEARCHING';
+                const stateEl = document.getElementById('infoStatus');
+                stateEl.textContent = state;
+                stateEl.style.color = state === 'TRACKING' ? '#0f0' :
+                                       state === 'LOST' ? '#f00' : '#fff';
+
+                document.getElementById('infoFps').textContent = this.fps;
+                document.getElementById('infoInliers').textContent = this.debug.inliers || 0;
+
+                // Use tracking confidence if available
+                const confidence = this.debug.tracking_confidence || this.debug.confidence || 0;
+                document.getElementById('infoConfidence').textContent = (confidence * 100).toFixed(0) + '%';
+
+                if (this.pose) {
+                    const pos = this.pose.position;
+                    const rot = this.pose.rotation;
+
+                    document.getElementById('infoPosePos').textContent =
+                        `${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}`;
+                    document.getElementById('infoPoseRot').textContent =
+                        `${rot.x.toFixed(0)}°, ${rot.y.toFixed(0)}°, ${rot.z.toFixed(0)}°`;
+                    document.getElementById('infoPoseDist').textContent =
+                        `${this.pose.distance.toFixed(2)}m`;
+
+                    // Show lookDot if available (debug)
+                    if (this.pose.look_dot !== undefined) {
+                        console.log('[Debug] lookDot:', this.pose.look_dot.toFixed(2));
+                    }
+                } else {
+                    document.getElementById('infoPosePos').textContent = '-';
+                    document.getElementById('infoPoseRot').textContent = '-';
+                    document.getElementById('infoPoseDist').textContent = '-';
+                }
+
+                // Update IMU debug values
+                this.updateImuPanel();
+            }
+
+            updateImuPanel() {
+                const imuStatus = this.imuManager.isActive ? 'Active' : 'Inactive';
+                const statusEl = document.getElementById('infoImuStatus');
+                statusEl.textContent = imuStatus;
+                statusEl.style.color = this.imuManager.isActive ? '#0f0' : '#888';
+
+                if (this.imuManager.isActive) {
+                    const orient = this.imuManager.orientation;
+                    document.getElementById('infoImuAlpha').textContent = orient.alpha.toFixed(1) + '°';
+                    document.getElementById('infoImuBeta').textContent = orient.beta.toFixed(1) + '°';
+                    document.getElementById('infoImuGamma').textContent = orient.gamma.toFixed(1) + '°';
+
+                    // Show rotation delta from reference if available
+                    if (this.imuManager.hasReference) {
+                        const rotMag = this.imuManager.getRotationMagnitude();
+                        document.getElementById('infoImuDelta').textContent = rotMag.toFixed(1) + '°';
+                    } else {
+                        document.getElementById('infoImuDelta').textContent = 'No ref';
+                    }
+                } else {
+                    document.getElementById('infoImuAlpha').textContent = '-';
+                    document.getElementById('infoImuBeta').textContent = '-';
+                    document.getElementById('infoImuGamma').textContent = '-';
+                    document.getElementById('infoImuDelta').textContent = '-';
+                }
+            }
+        }
+
+        // Start app when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            window.app = new WebARApp();
+        });
+    </script>
+</body>
+
+</html>

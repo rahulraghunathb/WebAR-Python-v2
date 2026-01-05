@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Model Alignment Tool</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <a href="/static/index.html" class="back-btn">&larr; Back to AR</a>
+            <h1>3D Model Alignment Tool</h1>
+            <div class="header-spacer"></div>
+        </header>
+
+        <!-- Main content -->
+        <div class="main-content">
+            <!-- 3D Viewport -->
+            <div class="viewport-container">
+                <canvas id="alignmentCanvas"></canvas>
+                <div class="viewport-info">
+                    <span id="viewportMode">Orbit Mode</span>
+                    <span class="separator">|</span>
+                    <span>Scroll to zoom, drag to orbit</span>
+                </div>
+            </div>
+
+            <!-- Controls Panel -->
+            <div class="controls-panel">
+                <h2>Transform Controls</h2>
+
+                <!-- Position -->
+                <div class="control-group">
+                    <h3>Position (meters)</h3>
+                    <div class="control-row">
+                        <label>X</label>
+                        <input type="range" id="posX" min="-2" max="2" step="0.01" value="0">
+                        <input type="number" id="posXNum" step="0.01" value="0">
+                    </div>
+                    <div class="control-row">
+                        <label>Y</label>
+                        <input type="range" id="posY" min="-2" max="2" step="0.01" value="0">
+                        <input type="number" id="posYNum" step="0.01" value="0">
+                    </div>
+                    <div class="control-row">
+                        <label>Z</label>
+                        <input type="range" id="posZ" min="-2" max="2" step="0.01" value="0">
+                        <input type="number" id="posZNum" step="0.01" value="0">
+                    </div>
+                </div>
+
+                <!-- Rotation -->
+                <div class="control-group">
+                    <h3>Rotation (degrees)</h3>
+                    <div class="control-row">
+                        <label>X</label>
+                        <input type="range" id="rotX" min="-180" max="180" step="1" value="0">
+                        <input type="number" id="rotXNum" step="1" value="0">
+                    </div>
+                    <div class="control-row">
+                        <label>Y</label>
+                        <input type="range" id="rotY" min="-180" max="180" step="1" value="0">
+                        <input type="number" id="rotYNum" step="1" value="0">
+                    </div>
+                    <div class="control-row">
+                        <label>Z</label>
+                        <input type="range" id="rotZ" min="-180" max="180" step="1" value="0">
+                        <input type="number" id="rotZNum" step="1" value="0">
+                    </div>
+                </div>
+
+                <!-- Scale -->
+                <div class="control-group">
+                    <h3>Scale</h3>
+                    <div class="control-row">
+                        <label>Uniform</label>
+                        <input type="range" id="scaleUniform" min="0.01" max="5" step="0.01" value="1">
+                        <input type="number" id="scaleUniformNum" step="0.01" value="1">
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="nonUniformScale">
+                        <label for="nonUniformScale">Non-uniform scale</label>
+                    </div>
+                    <div id="nonUniformControls" class="hidden">
+                        <div class="control-row">
+                            <label>X</label>
+                            <input type="range" id="scaleX" min="0.01" max="5" step="0.01" value="1">
+                            <input type="number" id="scaleXNum" step="0.01" value="1">
+                        </div>
+                        <div class="control-row">
+                            <label>Y</label>
+                            <input type="range" id="scaleY" min="0.01" max="5" step="0.01" value="1">
+                            <input type="number" id="scaleYNum" step="0.01" value="1">
+                        </div>
+                        <div class="control-row">
+                            <label>Z</label>
+                            <input type="range" id="scaleZ" min="0.01" max="5" step="0.01" value="1">
+                            <input type="number" id="scaleZNum" step="0.01" value="1">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="control-group">
+                    <h3>Quick Actions</h3>
+                    <div class="button-row">
+                        <button id="resetBtn" class="btn btn-secondary">Reset All</button>
+                        <button id="centerBtn" class="btn btn-secondary">Center on Target</button>
+                    </div>
+                    <div class="button-row">
+                        <button id="flipXBtn" class="btn btn-small">Flip X</button>
+                        <button id="flipYBtn" class="btn btn-small">Flip Y</button>
+                        <button id="flipZBtn" class="btn btn-small">Flip Z</button>
+                    </div>
+                    <div class="button-row">
+                        <button id="rotate90XBtn" class="btn btn-small">+90 X</button>
+                        <button id="rotate90YBtn" class="btn btn-small">+90 Y</button>
+                        <button id="rotate90ZBtn" class="btn btn-small">+90 Z</button>
+                    </div>
+                </div>
+
+                <!-- Output Panel -->
+                <div class="control-group output-group">
+                    <h3>Export Transform</h3>
+                    <div class="output-format">
+                        <label>Format:</label>
+                        <select id="outputFormat">
+                            <option value="json">JSON Object</option>
+                            <option value="js">JavaScript Config</option>
+                            <option value="threejs">Three.js Code</option>
+                        </select>
+                    </div>
+                    <div class="output-container">
+                        <pre id="outputCode"></pre>
+                    </div>
+                    <button id="copyBtn" class="btn btn-primary">
+                        <span id="copyText">Copy to Clipboard</span>
+                    </button>
+                </div>
+
+                <!-- Coordinate System Info -->
+                <div class="control-group info-group">
+                    <h3>Coordinate System</h3>
+                    <p class="info-text">
+                        <strong>Origin:</strong> Center of target image<br>
+                        <strong>X-axis:</strong> Right (positive)<br>
+                        <strong>Y-axis:</strong> Up (positive) - Three.js convention<br>
+                        <strong>Z-axis:</strong> Out of target (positive)<br>
+                        <strong>Units:</strong> Meters (target is 1m x 1m by default)
+                    </p>
+                    <p class="info-text warning">
+                        These values are designed to match the AR runtime coordinate system exactly.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="alignment.js"></script>
+</body>
+</html>

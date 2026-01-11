@@ -32,11 +32,19 @@ processor = ImageProcessor(detector=detector, matcher=matcher)
 DEFAULT_TARGET_PATH = os.path.join(os.path.dirname(__file__), 'static', 'assets', 'ranger-base-image.jpg')
 
 def load_default_target():
+    # Try loading preprocessed blob first
+    blob_path = DEFAULT_TARGET_PATH.replace('.jpg', '.webarimg')
+    if os.path.exists(blob_path):
+        if processor.load_target_blob(blob_path):
+            print(f"✓ Preprocessed target loaded: {blob_path}")
+            return True
+
+    # Fallback to standard image loading
     if os.path.exists(DEFAULT_TARGET_PATH):
         target_image = cv2.imread(DEFAULT_TARGET_PATH, cv2.IMREAD_COLOR)
         if target_image is not None:
             processor.set_target(target_image)
-            print(f"✓ Target image loaded: {DEFAULT_TARGET_PATH}")
+            print(f"✓ Target image loaded (runtime extraction): {DEFAULT_TARGET_PATH}")
             return True
     return False
 

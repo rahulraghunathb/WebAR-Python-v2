@@ -227,6 +227,23 @@ ngrok http 5000
 # Use the https://...ngrok.io URL on your phone
 ```
 
+### 4. Target Image Preprocessing (Optimization)
+
+To improve FPS and reduce initial load time, you can preprocess your target images offline. This extracts ORB features once and saves them as a compressed binary blob (`.webarimg`).
+
+```bash
+# Preprocess the default target
+python preprocess_target.py static/assets/ranger-base-image.jpg --features 5000
+```
+
+**Benefits:**
+
+- **Faster Start:** Server skips the expensive multi-scale feature extraction on startup.
+- **Higher FPS:** Heavy extraction is moved offline, leaving more CPU for runtime matching.
+- **Improved Detection:** You can extract more features (5k+) offline than you would at runtime without performance penalty.
+
+The server will automatically look for a `.webarimg` file with the same name as your target image and load it if found.
+
 ---
 
 ## Configuration

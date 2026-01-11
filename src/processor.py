@@ -6,6 +6,8 @@ Best balance of performance and accuracy with no false positives.
 from typing import Tuple, Optional, Dict, List
 import cv2
 import numpy as np
+import pickle
+import os
 
 from .interfaces import (
     IImageProcessor,
@@ -64,7 +66,6 @@ class ImageProcessor(IImageProcessor):
         
         # Calculate physical size maintaining target aspect ratio
         # Use the larger dimension as the base (1 meter)
-        h, w = target_image.shape[:2]
         aspect_ratio = w / h
         
         if w >= h:
@@ -103,6 +104,59 @@ class ImageProcessor(IImageProcessor):
         
         print(f"Pyramid: {[p['kp_count'] for p in self._pyramid]} keypoints")
         return True
+
+    def load_target_blob(self, blob_path: str) -> bool:
+        """Load preprocessed heart image target from .webarimg blob."""
+        if not os.path.exists(blob_path):
+            print(f"Error: Blob not found at {blob_path}")
+            return False
+
+        try:
+            with open(blob_path, 'rb') as f:
+                data = pickle.load(f)
+
+            w, h = data['original_size']
+            self._target_image = np.zeros((h, w, 3), dtype=np.uint8) # Dummy image for aspect ratio
+            self._target_corners = np.array([
+                [0, 0], [w, 0], [w, h], [0, h]
+            ], dtype=np.float32)
+
+            aspect_ratio = w / h
+            if w >= h:
+                target_width = self.TARGET_PHYSICAL_BASE
+                target_height = self.TARGET_PHYSICAL_BASE / aspect_ratio
+            else:
+                target_height = self.TARGET_PHYSICAL_BASE
+                target_width = self.TARGET_PHYSICAL_BASE * aspect_ratio
+
+            self._pose_solver.set_target_size(target_width, target_height)
+            
+            self._pyramid = []
+            for entry in data['pyramid']:
+                # Reconstruct cv2.KeyPoint objects
+                keypoints = []
+                for k in entry['keypoints']:
+                    kp = cv2.KeyPoint(
+                        x=k['pt'][0], y=k['pt'][1],
+                        size=k['size'], angle=k['angle'],
+                        response=k['response'], octave=k['octave'],
+                        class_id=k['class_id']
+                    )
+                    keypoints.append(kp)
+                
+                self._pyramid.append({
+                    'scale': entry['scale'],
+                    'keypoints': keypoints,
+                    'descriptors': entry['descriptors'],
+                    'kp_count': len(keypoints)
+                })
+
+            print(f"✓ Target loaded from blob: {blob_path}")
+            print(f"Pyramid: {[p['kp_count'] for p in self._pyramid]} keypoints")
+            return True
+        except Exception as e:
+            print(f"Error loading target blob: {e}")
+            return False
     
     def detect(self, frame: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], bool, float]:
         """

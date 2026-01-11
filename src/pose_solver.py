@@ -357,7 +357,7 @@ class PoseSolver:
             self._last_tvec = None
             print(f"[Pose] LOST→SEARCHING: Lost for {self._lost_frames} frames")
 
-        return self._last_pose  # Return last known pose during recovery
+        return None  # CRITICAL: Do NOT return last known pose during recovery.
 
     def _handle_detection_failure(self):
         """Handle failed detection."""
@@ -380,7 +380,7 @@ class PoseSolver:
         self._confidence *= 0.8  # Decay confidence
 
         print(f"[Pose] TRACKING→LOST: Tracking failed")
-        return self._last_pose  # Return last known pose
+        return None  # CRITICAL: Return None to avoid "stuck" model visual.
 
     def _compute_reprojection_error(self, object_points: np.ndarray, image_points: np.ndarray,
                                      rvec: np.ndarray, tvec: np.ndarray) -> float:

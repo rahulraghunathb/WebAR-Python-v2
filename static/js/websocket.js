@@ -5,19 +5,19 @@
 
 class WebSocketManager {
     constructor(url = null) {
-        this.socket = null;
-        this.url = url;
-        this.isConnected = false;
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 1000;
+        this.socket = null
+        this.url = url
+        this.isConnected = false
+        this.reconnectAttempts = 0
+        this.maxReconnectAttempts = 5
+        this.reconnectDelay = 1000
 
         // Event callbacks
-        this.onConnectCallback = null;
-        this.onDisconnectCallback = null;
-        this.onResultCallback = null;
-        this.onStatusCallback = null;
-        this.onErrorCallback = null;
+        this.onConnectCallback = null
+        this.onDisconnectCallback = null
+        this.onResultCallback = null
+        this.onStatusCallback = null
+        this.onErrorCallback = null
     }
 
     /**
@@ -33,56 +33,56 @@ class WebSocketManager {
                     reconnection: true,
                     reconnectionAttempts: this.maxReconnectAttempts,
                     reconnectionDelay: this.reconnectDelay
-                });
+                })
 
                 // Connection handlers
                 this.socket.on('connect', () => {
-                    console.log('WebSocket connected');
-                    this.isConnected = true;
-                    this.reconnectAttempts = 0;
+                    console.log('WebSocket connected')
+                    this.isConnected = true
+                    this.reconnectAttempts = 0
                     if (this.onConnectCallback) {
-                        this.onConnectCallback();
+                        this.onConnectCallback()
                     }
-                    resolve();
-                });
+                    resolve()
+                })
 
                 this.socket.on('disconnect', (reason) => {
-                    console.log('WebSocket disconnected:', reason);
-                    this.isConnected = false;
+                    console.log('WebSocket disconnected:', reason)
+                    this.isConnected = false
                     if (this.onDisconnectCallback) {
-                        this.onDisconnectCallback(reason);
+                        this.onDisconnectCallback(reason)
                     }
-                });
+                })
 
                 this.socket.on('connect_error', (error) => {
-                    console.error('WebSocket connection error:', error);
-                    this.reconnectAttempts++;
+                    console.error('WebSocket connection error:', error)
+                    this.reconnectAttempts++
                     if (this.onErrorCallback) {
-                        this.onErrorCallback(error);
+                        this.onErrorCallback(error)
                     }
                     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                        reject(new Error('Max reconnection attempts reached'));
+                        reject(new Error('Max reconnection attempts reached'))
                     }
-                });
+                })
 
                 // Custom event handlers
                 this.socket.on('status', (data) => {
                     if (this.onStatusCallback) {
-                        this.onStatusCallback(data);
+                        this.onStatusCallback(data)
                     }
-                });
+                })
 
                 this.socket.on('result', (data) => {
                     if (this.onResultCallback) {
-                        this.onResultCallback(data);
+                        this.onResultCallback(data)
                     }
-                });
+                })
 
             } catch (error) {
-                console.error('WebSocket initialization error:', error);
-                reject(error);
+                console.error('WebSocket initialization error:', error)
+                reject(error)
             }
-        });
+        })
     }
 
     /**
@@ -90,10 +90,10 @@ class WebSocketManager {
      */
     disconnect() {
         if (this.socket) {
-            this.socket.disconnect();
-            this.socket = null;
+            this.socket.disconnect()
+            this.socket = null
         }
-        this.isConnected = false;
+        this.isConnected = false
     }
 
     /**
@@ -102,10 +102,10 @@ class WebSocketManager {
      */
     sendFrame(frameData) {
         if (!this.isConnected || !this.socket) {
-            return false;
+            return false
         }
-        this.socket.emit('frame', frameData);
-        return true;
+        this.socket.emit('frame', frameData)
+        return true
     }
 
     /**
@@ -113,15 +113,16 @@ class WebSocketManager {
      * @param {string} frameData - Base64 encoded frame
      * @param {Object} intrinsics - Camera intrinsics {fx, fy, cx, cy, width, height, fov}
      */
-    sendFrameWithIntrinsics(frameData, intrinsics) {
+    sendFrameWithIntrinsics(frameData, intrinsics, frameId = null) {
         if (!this.isConnected || !this.socket) {
-            return false;
+            return false
         }
         this.socket.emit('frame', {
             image: frameData,
-            intrinsics: intrinsics
-        });
-        return true;
+            intrinsics: intrinsics,
+            id: frameId
+        })
+        return true
     }
 
     /**
@@ -129,7 +130,7 @@ class WebSocketManager {
      * @param {Function} callback
      */
     onConnect(callback) {
-        this.onConnectCallback = callback;
+        this.onConnectCallback = callback
     }
 
     /**
@@ -137,7 +138,7 @@ class WebSocketManager {
      * @param {Function} callback
      */
     onDisconnect(callback) {
-        this.onDisconnectCallback = callback;
+        this.onDisconnectCallback = callback
     }
 
     /**
@@ -145,7 +146,7 @@ class WebSocketManager {
      * @param {Function} callback
      */
     onResult(callback) {
-        this.onResultCallback = callback;
+        this.onResultCallback = callback
     }
 
     /**
@@ -153,7 +154,7 @@ class WebSocketManager {
      * @param {Function} callback
      */
     onStatus(callback) {
-        this.onStatusCallback = callback;
+        this.onStatusCallback = callback
     }
 
     /**
@@ -161,7 +162,7 @@ class WebSocketManager {
      * @param {Function} callback
      */
     onError(callback) {
-        this.onErrorCallback = callback;
+        this.onErrorCallback = callback
     }
 
     /**
@@ -169,9 +170,9 @@ class WebSocketManager {
      * @returns {boolean}
      */
     isReady() {
-        return this.isConnected && this.socket !== null;
+        return this.isConnected && this.socket !== null
     }
 }
 
 // Export singleton instance
-window.WebSocketManager = WebSocketManager;
+window.WebSocketManager = WebSocketManager

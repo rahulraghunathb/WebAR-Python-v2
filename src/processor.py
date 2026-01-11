@@ -12,7 +12,7 @@ from .interfaces import (
     IFeatureDetector,
     IFeatureMatcher
 )
-from .pose_solver import PoseSolver
+from .pose_solver import PoseSolver, TrackingState
 
 
 class ImageProcessor(IImageProcessor):
@@ -198,6 +198,10 @@ class ImageProcessor(IImageProcessor):
 
             # Early exit if excellent
             if inliers_count >= 15 and inlier_ratio >= 0.5 and reproj_error < 2.0:
+                break
+            
+            # FAST-TRACKING Early exit: during stable tracking, even moderate success is enough to move on
+            if self.pose_solver._state == TrackingState.TRACKING and inliers_count >= 12 and inlier_ratio >= 0.45 and reproj_error < 3.5:
                 break
 
         if best:

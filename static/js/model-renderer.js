@@ -43,6 +43,15 @@ class ModelRenderer {
         this.lastDistance = null
         this.isTracking = false
 
+        // IMU Baseline - for inter-frame prediction
+        this.imuOrientationBase = null
+        this.imuPredictionEnabled = true
+        this.imuHistory = new Map() // ID -> Quaternion
+
+        // Dead Reckoning state
+        this.lastVisionTime = 0
+        this.deadReckonLimit = 500 // ms to continue rotation without vision
+
         // IMU manager reference (set externally)
         this.imuManager = null
 
@@ -301,9 +310,30 @@ class ModelRenderer {
         this.targetPosition.copy(position)
         this.targetQuaternion.copy(quaternion)
 
-        // ADAPTIVE SMOOTHING based on IMU stability
-        let positionAlpha = 0.4  // Increased from 0.15 for better responsiveness
-        let rotationAlpha = 0.35 // Increased from 0.12 for better responsiveness
+        // SYNC: Retrieve the exact IMU state when this frame was captured
+        if (pose.id && this.imuHistory.has(pose.id)) {
+            const histIMU = this.imuHistory.get(pose.id)
+            this.imuOrientationBase = new THREE.Quaternion(
+                histIMU.x, histIMU.y, histIMU.z, histIMU.w
+            )
+            // Cleanup history up to this ID
+            for (let key of this.imuHistory.keys()) {
+                if (key <= pose.id) this.imuHistory.delete(key)
+                else break
+            }
+        } else if (this.imuManager && this.imuManager.isActive) {
+            // Fallback: use current IMU if ID sync fails
+            const quat = this.imuManager.rawQuaternion || this.imuManager.quaternion
+            this.imuOrientationBase = new THREE.Quaternion(
+                quat.x, quat.y, quat.z, quat.w
+            )
+        }
+
+        // ADAPTIVE SMOOTHING - increased for Frame-IMU Sync
+        // We rely on 60 FPS IMU prediction for smoothness, so we can
+        // apply vision corrections almost instantly (0.8 alpha).
+        let positionAlpha = 0.8
+        let rotationAlpha = 0.8
 
         // If IMU is active and tracking, adjust smoothing based on device stability
         if (this.imuManager && this.imuManager.isActive && this.imuManager.hasReference) {
@@ -335,11 +365,19 @@ class ModelRenderer {
         // Update distance for display
         this.lastDistance = this.lastPosition.length()
 
+        // Sync last vision time
+        this.lastVisionTime = performance.now()
+
         // Mark as tracking
         this.isTracking = true
 
         // Show model and debug objects
         this.show()
+
+        // RESET INERTIAL STATE
+        if (this.imuManager) {
+            this.imuManager.resetInertialState()
+        }
     }
 
     /**
@@ -351,6 +389,22 @@ class ModelRenderer {
     }
 
     /**
+     * Store IMU state for a frame being sent (synchronization)
+     */
+    saveIMUBaseline(id, quat) {
+        if (!this.imuHistory) this.imuHistory = new Map()
+
+        // Use raw quaternion if available for zero-lag prediction baseline
+        this.imuHistory.set(id, { ...quat })
+
+        // Safety cap on history size
+        if (this.imuHistory.size > 100) {
+            const firstKey = this.imuHistory.keys().next().value
+            this.imuHistory.delete(firstKey)
+        }
+    }
+
+    /**
      * Reset pose smoothing (call when tracking is lost/regained)
      */
     resetPose() {
@@ -359,6 +413,7 @@ class ModelRenderer {
         this.lastDistance = null
         this.targetPosition = null
         this.targetQuaternion = null
+        this.imuHistory.clear()
         console.log('[Renderer] Pose reset')
     }
 
@@ -379,9 +434,52 @@ class ModelRenderer {
     }
 
     render() {
-        if (this.renderer && this.scene && this.camera) {
-            this.renderer.render(this.scene, this.camera)
+        if (!this.renderer || !this.scene || !this.camera) return
+
+        const now = performance.now()
+        const sinceVision = now - this.lastVisionTime
+
+        // Apply IMU prediction / Dead Reckoning (6DoF)
+        const canPredict = this.imuPredictionEnabled && this.imuManager && this.imuManager.isActive && this.imuOrientationBase
+        const shouldShow = this.isTracking && (sinceVision < this.deadReckonLimit)
+
+        if (canPredict && shouldShow) {
+            const dt = sinceVision / 1000 // seconds
+
+            // --- 1. ROTATIONAL PREDICTION (Physics Correct) ---
+            const q = this.imuManager.rawQuaternion || this.imuManager.quaternion
+            const currentIMU = new THREE.Quaternion(q.x, q.y, q.z, q.w)
+
+            // LOCAL Delta = inv(Base) * Current
+            const localDelta = this.imuOrientationBase.clone().invert().multiply(currentIMU)
+
+            // Pose = lastVision * localDelta
+            const projectedQuaternion = this.lastQuaternion.clone().multiply(localDelta)
+            this.camera.quaternion.copy(projectedQuaternion)
+
+            // --- 2. TRANSLATIONAL PREDICTION (Inertial) ---
+            // x = xo + v*dt
+            if (this.imuManager.linVel && this.imuManager.linVel.length() > 0.01) {
+                const velocityWorld = this.imuManager.linVel.clone()
+
+                // Accelerometers measure in local phone frame. 
+                // We must project that velocity into the world frame using the device orientation.
+                // Note: currentIMU is the phone's orientation relative to Earth.
+                velocityWorld.applyQuaternion(projectedQuaternion)
+
+                const translationDelta = velocityWorld.multiplyScalar(dt)
+                this.camera.position.addVectors(this.lastPosition, translationDelta)
+            } else {
+                this.camera.position.copy(this.lastPosition)
+            }
+
+            // Ensure model is visible during dead reckoning
+            if (this.modelContainer) this.modelContainer.visible = true
+        } else if (!shouldShow) {
+            this.hide()
         }
+
+        this.renderer.render(this.scene, this.camera)
     }
 
     setDebug(enabled) {

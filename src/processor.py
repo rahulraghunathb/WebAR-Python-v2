@@ -255,7 +255,7 @@ class ImageProcessor(IImageProcessor):
                 break
             
             # FAST-TRACKING Early exit: during stable tracking, even moderate success is enough to move on
-            if self.pose_solver._state == TrackingState.TRACKING and inliers_count >= 12 and inlier_ratio >= 0.45 and reproj_error < 3.5:
+            if self._pose_solver._state == TrackingState.TRACKING and inliers_count >= 12 and inlier_ratio >= 0.45 and reproj_error < 3.5:
                 break
 
         if best:

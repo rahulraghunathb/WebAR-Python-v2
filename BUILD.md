@@ -114,11 +114,45 @@ A Python + Three.js WebAR SDK for real-time image target detection, 6DoF AR mode
 
 ---
 
+## Vision Processing Components
+
+### FrameCapture (`frame-capture.js`)
+
+Efficient raw pixel capture from video feed:
+
+- Uses `OffscreenCanvas` for optimal performance
+- Captures raw grayscale `Uint8Array` pixels
+- Eliminates JPEG/Base64 encoding overhead
+- ~1-2ms capture time per frame
+
+```javascript
+const frameCapture = new FrameCapture(video, 640)
+const { gray, width, height } = frameCapture.captureGrayscale()
+```
+
+### VisionManager (`vision-manager.js`)
+
+Abstraction layer for vision processing:
+
+- Currently delegates to server-side Python processing
+- Handles frame throttling and metrics tracking
+- Designed for future client-side processing integration
+
+```javascript
+const visionManager = new VisionManager()
+await visionManager.init({ video, wsManager, mode: "server" })
+visionManager.onPose = (result) => {
+  /* handle pose */
+}
+```
+
+---
+
 ## Project Structure
 
 ```
 WebAR-Python/
-├── app.py                          # Flask server + WebSocket (eventlet)
+├── app.py                          # Flask server + WebSocket
 ├── requirements.txt                # Python dependencies
 ├── BUILD.md                        # Documentation
 ├── SYSTEM_DESIGN.md                # Technical design details
@@ -131,14 +165,8 @@ WebAR-Python/
 │   │
 │   ├── detectors/                  # Feature extraction
 │   │   └── orb_detector.py         # ORB (default)
-│   ├── matchers/                   # Feature matching
-│   │   └── bf_matcher.py           # Brute-Force (default)
-│   ├── stabilizers/                # Pose smoothing
-│   │   └── kalman_stabilizer.py    # Kalman filter (optional)
-│   ├── trackers/                   # Frame-to-frame tracking
-│   │   └── optical_flow_tracker.py # Lucas-Kanade (optional)
-│   └── renderers/                  # Visualization
-│       └── contour_renderer.py     # Draw detection box
+│   └── matchers/                   # Feature matching
+│       └── bf_matcher.py           # Brute-Force (default)
 │
 └── static/
     ├── index.html                  # Main AR viewer app (Orchestrator) ⭐
@@ -155,7 +183,11 @@ WebAR-Python/
         ├── websocket.js            # Socket.IO client
         ├── camera-intrinsics.js    # FOV and Matrix computation ⭐
         ├── device-motion.js        # IMU sensor fusion ⭐
-        └── model-renderer.js       # Three.js 6DoF AR rendering
+        ├── model-renderer.js       # Three.js 6DoF AR rendering
+        │
+        │── # Vision Processing (WASM Migration) ⭐
+        ├── frame-capture.js        # Raw pixel capture (OffscreenCanvas)
+        └── vision-manager.js       # Vision abstraction (server → WASM)
 ```
 
 ---

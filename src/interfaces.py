@@ -57,34 +57,6 @@ class IFeatureMatcher(ABC):
         pass
 
 
-class IContourDrawer(ABC):
-    """Interface for drawing detection results on images."""
-    
-    @abstractmethod
-    def draw_contour(
-        self,
-        image: np.ndarray,
-        target_corners: np.ndarray,
-        matches: List,
-        keypoints_target: List,
-        keypoints_scene: List
-    ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-        """
-        Draw contour around detected target.
-        
-        Args:
-            image: Scene image to draw on
-            target_corners: Corner points of target image
-            matches: List of good matches
-            keypoints_target: Keypoints from target
-            keypoints_scene: Keypoints from scene
-            
-        Returns:
-            Tuple of (annotated image, transformed corners or None)
-        """
-        pass
-
-
 class IImageProcessor(ABC):
     """Interface for the main image processing pipeline."""
     

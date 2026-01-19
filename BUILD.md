@@ -1,230 +1,158 @@
 # WebAR Image Target SDK - Architecture & Build Documentation
 
-A Python + Three.js WebAR SDK for real-time image target detection, 6DoF AR model rendering, and IMU sensor fusion.
+A Python + Three.js WebAR SDK for real-time image target detection, 6DoF pose estimation, and IMU-assisted rendering.
 
 ---
 
-## System Architecture
+## System Architecture (Current Implementation)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                              CLIENT (Browser)                                   │
 ├────────────────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐    ┌──────────────┐    ┌────────────────────────────────┐   │
-│  │  Camera.js   │───▶│   WebARApp   │───▶│         WebSocket.js           │   │
-│  │(Intrinsics)  │    │(Orchestrator)│    │   (Frame + Intrinsics → Srv)   │   │
-│  └──────────────┘    └──────────────┘    └────────────────────────────────┘   │
+│  ┌──────────────┐    ┌──────────────┐    ┌────────────────────────────────┐    │
+│  │ Camera.js    │───▶│  WebARApp    │───▶│     WebSocket.js               │    │
+│  │ (Stream)     │    │ (Orchestr.) │    │  (Frame + Intrinsics → Srv)    │    │
+│  └──────────────┘    └──────────────┘    └────────────────────────────────┘    │
 │         │                   │                           │                      │
 │         ▼                   ▼                           ▼                      │
-│  ┌──────────────┐    ┌───────────────┐    ┌────────────────────────────────┐  │
-│  │ DeviceMotion │    │ Three.js      │    │     ModelRenderer.js           │  │
-│  │ (IMU Fusion) │◀──▶│ (6DoF Canvas) │◀──▶│  (Pose + IMU 6DoF Rendering)   │  │
-│  └──────────────┘    └───────────────┘    └────────────────────────────────┘  │
+│  ┌──────────────┐    ┌───────────────┐    ┌────────────────────────────────┐   │
+│  │ DeviceMotion │    │  Three.js     │    │   ModelRenderer.js            │   │
+│  │ (IMU Fusion) │◀──▶│ (6DoF Canvas) │◀──▶│  (Pose + IMU 6DoF Rendering)   │   │
+│  └──────────────┘    └───────────────┘    └────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────────────┘
-                                    │ WebSocket
+                                    │ Socket.IO
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                           SERVER (Python/Flask)                                 │
 ├────────────────────────────────────────────────────────────────────────────────┤
-│  ┌────────────────────────────────────────────────────────────────────────┐   │
-│  │                            app.py                                       │   │
-│  │  WebSocket Handler: receive frame → process → emit pose + corners       │   │
-│  │  Async Mode: eventlet                                                   │   │
-│  └────────────────────────────────────────────────────────────────────────┘   │
+│  ┌────────────────────────────────────────────────────────────────────────┐    │
+│  │                            app.py                                       │    │
+│  │  Socket.IO (threading): receive frame → process → emit pose + corners   │    │
+│  └────────────────────────────────────────────────────────────────────────┘    │
 │                                    │                                           │
 │                                    ▼                                           │
-│  ┌────────────────────────────────────────────────────────────────────────┐   │
-│  │                         processor.py                                    │   │
-│  │  ImageProcessor: Multi-scale ORB detection + homography validation     │   │
-│  └────────────────────────────────────────────────────────────────────────┘   │
+│  ┌────────────────────────────────────────────────────────────────────────┐    │
+│  │                         processor.py                                   │    │
+│  │  Multi-scale ORB detection + homography + geometry validation           │    │
+│  └────────────────────────────────────────────────────────────────────────┘    │
 │         │                    │                    │                            │
 │         ▼                    ▼                    ▼                            │
-│  ┌─────────────┐      ┌─────────────┐      ┌─────────────────────┐           │
-│  │ ORBDetector │      │  BFMatcher  │      │     PoseSolver      │           │
-│  │ (Features)  │      │ (Matching)  │      │ (solvePnP + 6DoF)   │           │
-│  └─────────────┘      └─────────────┘      └─────────────────────┘           │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────────────┐             │
+│  │ ORBDetector │      │  BFMatcher  │      │     PoseSolver      │             │
+│  │ (Features)  │      │ (Matching)  │      │ (solvePnP + 6DoF)    │             │
+│  └─────────────┘      └─────────────┘      └─────────────────────┘             │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Complete Data Flow
+## Complete Data Flow (Current)
 
-### 1. Frame Capture → Detection → AR Rendering
+### 1. Camera + Permissions
+- `CameraIntrinsicsManager` requests camera permission and caches device info.
+- `CameraManager` starts the stream and provides native resolution.
+- Intrinsics are initialized **once** from device FOV heuristics and locked.
+- Motion permission is requested on user gesture (iOS requirement).
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│ 1. CAPTURE                                                                       │
-│    Camera.js: getUserMedia() → video element → canvas → JPEG (70% quality)      │
-│    Throttled to 10 FPS, downscaled to 640px                                     │
-│    Intrinsics: Computed once and sent with EVERY frame                          │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│ 2. TRANSPORT                                                                     │
-│    WebSocket.js: Base64 encode → emit('frame', {image, intrinsics}) → Server    │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│ 3. DETECTION (processor.py)                                                      │
-│    a. Extract ORB features from camera frame                                    │
-│    b. Match against multi-scale target pyramid [1.0, 0.75, 0.5, 0.4, 0.3]       │
-│    c. Compute homography with RANSAC (threshold: 4.0px)                         │
-│    d. Validate quad geometry (area, convexity, angles, edges)                   │
-│    e. Return corners if valid                                                    │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│ 4. POSE ESTIMATION (pose_solver.py)                                              │
-│    a. Define 3D target points (Physical size computed from aspect ratio)         │
-│    b. cv2.solvePnPRansac() → rvec, tvec                                         │
-│    c. State Machine: SEARCHING → TRACKING → LOST                                │
-│    d. Temporal smoothing (EMA α=0.7) + tracking prior                           │
-│    e. Convert OpenCV → Three.js coordinates (Y-up, Z-backward)                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│ 5. RESPONSE                                                                      │
-│    {                                                                             │
-│      detected: true,                                                             │
-│      pose: {                                                                     │
-│        matrix: [16 floats],  // Camera transform for Three.js                   │
-│        position: {x, y, z},                                                      │
-│        rotation: {x, y, z},                                                      │
-│        distance: 1.2,        // Real distance in meters                         │
-│        state: "TRACKING"                                                         │
-│      },                                                                          │
-│      debug: { inliers: 24, confidence: 0.95 }                                    │
-│    }                                                                             │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│ 6. AR RENDERING (model-renderer.js)                                              │
-│    a. Model placed at ORIGIN (target location)                                  │
-│    b. Camera positioned using pose.matrix                                        │
-│    c. SENSOR FUSION: IMU data corrects rotation when vision is slightly laggy   │
-│    d. Three.js renders GLB model over video feed                                │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
+### 2. Frame Capture → Transport
+- `WebARApp` captures frames in `static/index.html`.
+- Frames are **downscaled to max 480px**, encoded as **JPEG (quality 0.5)**.
+- Intrinsics are **scaled** to the downscaled frame size and sent with each frame.
+- Frames are sent ~every **80ms** (~12 FPS) via Socket.IO.
+- Each frame includes a timestamp-based `id` for IMU/vision alignment.
+
+### 3. Detection (Server)
+- `app.py` decodes Base64 JPEG → OpenCV frame.
+- Intrinsics are applied per frame when provided; otherwise FOV fallback is used.
+- `ImageProcessor.detect()` runs multi-scale ORB + homography + quad validation.
+- Processing is executed on a `ThreadPoolExecutor(max_workers=1)` to avoid backlog.
+
+### 4. Pose Estimation (Server)
+- Inlier matches are mapped to 3D target points (planar target).
+- `PoseSolver.compute_pose_ransac()` runs `solvePnPRansac` with tracking state machine.
+- OpenCV coordinates are converted to Three.js (Y-up, Z-back).
+- On tracking loss, the backend returns `None` to avoid a “stuck” model.
+
+### 5. Rendering + IMU Fusion (Client)
+- `ModelRenderer` treats the **target as world origin**; camera moves per pose.
+- IMU samples are time-aligned using **frame IDs** for smoothing and prediction.
+- Dead-reckoning uses IMU for rotation and limited translation between vision updates.
 
 ---
 
 ## Vision Processing Components
 
-### FrameCapture (`frame-capture.js`)
+### ImageProcessor (`src/processor.py`)
+- Multi-scale target pyramid: `[1.0, 0.75, 0.5, 0.4, 0.3]`.
+- RANSAC homography with geometry validation (area, convexity, edges, angles).
+- Inlier ratio thresholds to reduce false positives.
+- Physical target size is derived from the target image aspect ratio.
 
-Efficient raw pixel capture from video feed:
+### PoseSolver (`src/pose_solver.py`)
+- Tracking state machine: `SEARCHING → DETECTING → TRACKING → LOST`.
+- Uses extrinsic guess for fast tracking updates.
+- Converts OpenCV to Three.js using a flip matrix and returns column-major matrices.
 
-- Uses `OffscreenCanvas` for optimal performance
-- Captures raw grayscale `Uint8Array` pixels
-- Eliminates JPEG/Base64 encoding overhead
-- ~1-2ms capture time per frame
+### Detectors / Matchers
+- `ORBDetector` for feature detection (default: `n_features=800` in `app.py`).
+- `BFMatcher` for binary descriptor matching (ratio test, default `ratio=0.8`).
+- Alternative detectors/matchers exist (`AKAZE`, `FLANN`) but are not wired by default.
 
-```javascript
-const frameCapture = new FrameCapture(video, 640)
-const { gray, width, height } = frameCapture.captureGrayscale()
-```
+---
 
-### VisionManager (`vision-manager.js`)
+## Frontend Components
 
-Abstraction layer for vision processing:
+### Core Orchestrator (`static/index.html`)
+- `WebARApp` manages permissions, camera, WebSocket, and render loop.
+- UI includes a live info panel and tracking badge.
+- Frame sender includes IMU baseline capture for sync.
 
-- Currently delegates to server-side Python processing
-- Handles frame throttling and metrics tracking
-- Designed for future client-side processing integration
+### Camera Intrinsics (`static/js/camera-intrinsics.js`)
+- FOV is derived from a device heuristic database.
+- Intrinsics are **scaled** for downsampled frames to preserve FOV.
 
-```javascript
-const visionManager = new VisionManager()
-await visionManager.init({ video, wsManager, mode: "server" })
-visionManager.onPose = (result) => {
-  /* handle pose */
-}
-```
+### IMU (`static/js/device-motion.js`)
+- Captures orientation and linear acceleration.
+- Provides delta rotation for smoothing and short-term prediction.
+
+### Renderer (`static/js/model-renderer.js`)
+- Model is normalized to fit ~0.5m and aligned to the target plane.
+- Camera pose uses 4x4 matrix from backend (column-major).
+- IMU prediction keeps rotation smooth between vision frames.
+
+### Vision Manager (Scaffolded, Not Wired)
+- `static/js/vision-manager.js` and `frame-capture.js` provide a future pipeline
+  for raw grayscale and client-side WASM. The current flow still uses
+  JPEG/Base64 from `index.html`.
 
 ---
 
 ## Project Structure
 
 ```
-WebAR-Python/
-├── app.py                          # Flask server + WebSocket
+WebAR-Python-Bhavin/
+├── app.py                          # Flask server + Socket.IO
+├── preprocess_target.py            # Offline target preprocessing
 ├── requirements.txt                # Python dependencies
 ├── BUILD.md                        # Documentation
 ├── SYSTEM_DESIGN.md                # Technical design details
+├── tests/                          # Unit tests (detector + matcher)
 │
 ├── src/
-│   ├── __init__.py                 # Package exports
-│   ├── interfaces.py               # Abstract base classes (ISP)
-│   ├── processor.py                # Core detection engine ⭐
-│   ├── pose_solver.py              # 6DoF pose estimation & tracking state ⭐
-│   │
-│   ├── detectors/                  # Feature extraction
-│   │   └── orb_detector.py         # ORB (default)
-│   └── matchers/                   # Feature matching
-│       └── bf_matcher.py           # Brute-Force (default)
+│   ├── processor.py                # Core detection engine
+│   ├── pose_solver.py              # 6DoF pose estimation + tracking
+│   ├── interfaces.py               # Interfaces
+│   ├── detectors/                  # ORB + AKAZE
+│   └── matchers/                   # BF + FLANN
 │
 └── static/
-    ├── index.html                  # Main AR viewer app (Orchestrator) ⭐
+    ├── index.html                  # Main WebAR viewer
     ├── model-editor.html           # 3D model adjustment tool
-    ├── assets/
-    │   ├── ranger-base-image.jpg   # Default target image
-    │   ├── ranger-3d-model.glb     # 3D model for AR
-    │   └── overlay.jpg             # Debug overlay asset
-    ├── alignment-tool/             # Tool for physical-to-virtual alignment
-    │   ├── index.html
-    │   └── alignment.js
-    └── js/
-        ├── camera.js               # Camera stream management
-        ├── websocket.js            # Socket.IO client
-        ├── camera-intrinsics.js    # FOV and Matrix computation ⭐
-        ├── device-motion.js        # IMU sensor fusion ⭐
-        ├── model-renderer.js       # Three.js 6DoF AR rendering
-        │
-        │── # Vision Processing (WASM Migration) ⭐
-        ├── frame-capture.js        # Raw pixel capture (OffscreenCanvas)
-        └── vision-manager.js       # Vision abstraction (server → WASM)
+    ├── alignment-tool/             # Physical-to-virtual alignment tool
+    ├── assets/                     # Target + model assets
+    └── js/                         # Camera, WebSocket, intrinsics, IMU, renderer
 ```
-
----
-
-## Core Components Deep Dive
-
-### 1. ImageProcessor (`processor.py`)
-
-- **Multi-Scale Pyramid**: Matches against 5 scales (1.0 to 0.3) to handle different distances.
-- **Scale Priority**: Remembers the last successful scale for faster subsequent matching.
-- **Geometry Validation**: Strict checks for convexity, area, and angles to ensure NO false positives.
-
-### 2. PoseSolver (`pose_solver.py`)
-
-- **State Machine**:
-  - `SEARCHING`: Full detection loop.
-  - `TRACKING`: Uses **Extrinsic Guess** (prior pose) for 3x faster and stable refinement.
-  - `LOST`: Holds last known pose for 5 frames while attempting recovery.
-- **Coordinate Conversion**: Maps OpenCV's Y-down matrix to Three.js's Y-up world.
-
-### 3. Frontend Orchestration (`index.html` + `/js`)
-
-- **WebARApp**: Manages the main lifecycle, permissions, and loop.
-- **CameraIntrinsicsManager**: Computes canonical intrinsics based on actual hardware to lock FOV.
-- **DeviceMotionManager**: Accesses Gyroscope/Accelerometer for rotational stability during movement.
-
----
-
-## Coordination Systems
-
-| System   | Up Axis | Depth Axis | Unit   |
-| -------- | ------- | ---------- | ------ |
-| OpenCV   | Y-Down  | Z-Forward  | Meters |
-| Three.js | Y-Up    | Z-Backward | Meters |
-| Browser  | Y-Down  | N/A        | Pixels |
-
-**Sensor Fusion**: When the target is detected, the IMU sets a reference. If the camera moves faster than the tracking updates, the IMU offsets the Three.js camera rotation to prevent "swimming".
 
 ---
 
@@ -251,39 +179,47 @@ python app.py
 
 ### 3. Mobile Access (HTTPS Required)
 
-`getUserMedia` and `DeviceMotionEvent` require a secure context (HTTPS).
-
 ```bash
 # In a new terminal
 ngrok http 5000
 # Use the https://...ngrok.io URL on your phone
 ```
 
-### 4. Target Image Preprocessing (Optimization)
-
-To improve FPS and reduce initial load time, you can preprocess your target images offline. This extracts ORB features once and saves them as a compressed binary blob (`.webarimg`).
-
-```bash
-# Preprocess the default target
-python preprocess_target.py static/assets/ranger-base-image.jpg --features 5000
-```
-
-**Benefits:**
-
-- **Faster Start:** Server skips the expensive multi-scale feature extraction on startup.
-- **Higher FPS:** Heavy extraction is moved offline, leaving more CPU for runtime matching.
-- **Improved Detection:** You can extract more features (5k+) offline than you would at runtime without performance penalty.
-
-The server will automatically look for a `.webarimg` file with the same name as your target image and load it if found.
+Notes:
+- Socket.IO runs in **threading** mode for compatibility with CPU-bound work.
+- `eventlet` is listed as a dependency but **not used** by default.
+- The server processes frames sequentially (`max_workers=1`) to avoid backlog.
 
 ---
 
-## Configuration
+## Target Image Preprocessing (Optional, Recommended)
 
-- **Target Image**: Replace `static/assets/ranger-base-image.jpg` with your target.
-- **3D Model**: Replace `static/assets/ranger-3d-model.glb` with your GLB file.
-- **Tracking Settings**: Adjust `MIN_MATCHES` and `RANSAC_THRESH` in `processor.py`.
-- **Smoothing**: Adjust `smoothing_alpha` in `processor.py` (0.7 = responsive).
+To avoid runtime feature extraction, preprocess targets to `.webarimg` blobs.
+
+```bash
+python preprocess_target.py static/assets/ranger-base-image.jpg --features 5000
+```
+
+Benefits:
+- Faster startup (loads precomputed pyramid)
+- Higher runtime FPS
+- More stable detection with more features
+
+The server automatically loads `.webarimg` with matching base filename.
+
+---
+
+## Configuration & Tuning
+
+### Server
+- `ImageProcessor.SCALES`, `MIN_MATCHES`, `RANSAC_THRESH` in `src/processor.py`.
+- Pose smoothing: `PoseSolver` smoothing and inlier thresholds in `src/pose_solver.py`.
+- `app.py` detector/matcher defaults: ORB features and ratio thresholds.
+
+### Client
+- Frame size and JPEG quality in `static/index.html`.
+- IMU smoothing and dead-reckoning in `static/js/device-motion.js` and `model-renderer.js`.
+- Model scale in `ModelRenderer` (`modelConfig.scale`).
 
 ---
 
@@ -292,6 +228,14 @@ The server will automatically look for a `.webarimg` file with the same name as 
 | Issue           | Cause       | Solution                                                |
 | --------------- | ----------- | ------------------------------------------------------- |
 | No Camera       | No HTTPS    | Use `ngrok` for mobile or `localhost` on PC.            |
-| Stuttering      | Low Network | Reduce frame scale from 640px to 480px in `index.html`. |
-| Model Jumps     | Multi-match | Ensure target image has unique, high-contrast features. |
+| Stuttering      | Low Network | Reduce frame size or JPEG quality in `index.html`.      |
+| Model Jumps     | Multi-match | Use a higher-contrast, unique target image.             |
 | IMU Not Working | iOS Policy  | iOS requires a user click to enable motion sensors.     |
+
+---
+
+## Tests
+
+```bash
+python -m unittest tests/test_detector.py
+```

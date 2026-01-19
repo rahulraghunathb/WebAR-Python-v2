@@ -184,6 +184,8 @@ def process_frame(data, frame_id):
             )
             if pose:
                 result["pose"] = pose
+                result["debug"]["tracking_state"] = pose.get("state")
+                result["debug"]["tracking_confidence"] = pose.get("confidence")
 
         if frame_id > 0:
             last_processed_id = frame_id

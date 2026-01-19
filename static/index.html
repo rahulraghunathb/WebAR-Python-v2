@@ -727,7 +727,7 @@
 
         updateBackendInfo() {
           // Show tracking state with color coding
-          const state = this.debug.state || "SEARCHING"
+          const state = this.debug.tracking_state || this.debug.state || "SEARCHING"
           const stateEl = document.getElementById("infoStatus")
           stateEl.textContent = state
           stateEl.style.color =

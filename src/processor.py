@@ -192,7 +192,8 @@ class ImageProcessor(IImageProcessor):
             # Match
             matches = self._matcher.match(entry['descriptors'], scene_desc)
             n_matches = len(matches)
-            if n_matches < self.MIN_MATCHES:
+            min_matches = max(self.MIN_MATCHES, self._matcher.get_min_matches())
+            if n_matches < min_matches:
                 continue
 
             # Compute homography with tight RANSAC
@@ -255,7 +256,12 @@ class ImageProcessor(IImageProcessor):
                 break
             
             # FAST-TRACKING Early exit: during stable tracking, even moderate success is enough to move on
-            if self._pose_solver._state == TrackingState.TRACKING and inliers_count >= 12 and inlier_ratio >= 0.45 and reproj_error < 3.5:
+            if (
+                self._pose_solver.get_state() == TrackingState.TRACKING
+                and inliers_count >= 12
+                and inlier_ratio >= 0.45
+                and reproj_error < 3.5
+            ):
                 break
 
         if best:
@@ -364,6 +370,42 @@ class ImageProcessor(IImageProcessor):
         pts_3d[:, 2] = 0  # Z = 0 (planar target)
 
         return pts_3d
+
+    def set_camera_intrinsics(
+        self,
+        fx: float,
+        fy: float,
+        cx: float,
+        cy: float,
+        frame_width: Optional[int] = None,
+        frame_height: Optional[int] = None,
+    ) -> None:
+        """Set camera intrinsics used for pose estimation."""
+        self._pose_solver.set_camera_intrinsics(
+            fx=fx,
+            fy=fy,
+            cx=cx,
+            cy=cy,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+
+    def compute_pose_ransac(
+        self,
+        object_points: np.ndarray,
+        image_points: np.ndarray,
+        frame_width: int,
+        frame_height: int,
+        fov_degrees: float = 60.0,
+    ) -> Optional[Dict]:
+        """Compute 6DoF pose from inlier keypoints using solvePnPRansac."""
+        return self._pose_solver.compute_pose_ransac(
+            object_points, image_points, frame_width, frame_height, fov_degrees
+        )
+
+    def map_2d_to_3d(self, pts_2d: np.ndarray) -> np.ndarray:
+        """Public wrapper for mapping target pixels to 3D coordinates."""
+        return self._map_2d_to_3d(pts_2d)
     
     def process_frame(self, frame):
         corners, _, _, detected, conf = self.detect(frame)

@@ -75,6 +75,8 @@ class PoseSolver:
         self._target_3d_points = None
         self._camera_matrix = None
         self._dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+        self._frame_width = None
+        self._frame_height = None
 
         # Tracking state
         self._state = TrackingState.SEARCHING
@@ -128,13 +130,25 @@ class PoseSolver:
         """Set temporal smoothing factor (0=max smooth, 1=no smooth)."""
         self._smoothing_alpha = np.clip(alpha, 0.1, 1.0)
 
-    def set_camera_intrinsics(self, fx: float, fy: float, cx: float, cy: float):
+    def set_camera_intrinsics(
+        self,
+        fx: float,
+        fy: float,
+        cx: float,
+        cy: float,
+        frame_width: Optional[int] = None,
+        frame_height: Optional[int] = None,
+    ):
         """Set camera intrinsic matrix directly."""
         self._camera_matrix = np.array([
             [fx, 0, cx],
             [0, fy, cy],
             [0, 0, 1]
         ], dtype=np.float32)
+        if frame_width is not None:
+            self._frame_width = int(frame_width)
+        if frame_height is not None:
+            self._frame_height = int(frame_height)
 
     def estimate_camera_from_fov(self, frame_width: int, frame_height: int,
                                   fov_degrees: float = 60.0):
@@ -144,7 +158,9 @@ class PoseSolver:
         fy = fx  # Square pixels
         cx = frame_width / 2
         cy = frame_height / 2
-        self.set_camera_intrinsics(fx, fy, cx, cy)
+        self.set_camera_intrinsics(
+            fx, fy, cx, cy, frame_width=frame_width, frame_height=frame_height
+        )
 
     def get_state(self) -> TrackingState:
         """Get current tracking state."""
@@ -477,8 +493,16 @@ class PoseSolver:
                 'fy': float(self._camera_matrix[1, 1]),
                 'cx': float(self._camera_matrix[0, 2]),
                 'cy': float(self._camera_matrix[1, 2]),
-                'frame_width': int(self._camera_matrix[0, 2] * 2),
-                'frame_height': int(self._camera_matrix[1, 2] * 2)
+                'frame_width': int(
+                    self._frame_width
+                    if self._frame_width is not None
+                    else self._camera_matrix[0, 2] * 2
+                ),
+                'frame_height': int(
+                    self._frame_height
+                    if self._frame_height is not None
+                    else self._camera_matrix[1, 2] * 2
+                )
             }
         }
 

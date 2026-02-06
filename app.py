@@ -106,9 +106,9 @@ def handle_frame(data):
     # Handle both dict and raw data
     frame_id = data.get("id", 0) if isinstance(data, dict) else 0
 
-    if frame_id > 0 and frame_id <= last_processed_id:
-        return
     with queue_lock:
+        if frame_id > 0 and frame_id <= last_processed_id:
+            return
         if frame_id > 0 and frame_id <= last_received_id:
             return
         if len(frame_queue) == frame_queue.maxlen:
@@ -122,8 +122,9 @@ def handle_frame(data):
 def process_frame(data, frame_id):
     global last_processed_id, queue_drop_count
 
-    if frame_id > 0 and frame_id < last_processed_id:
-        return
+    with queue_lock:
+        if frame_id > 0 and frame_id < last_processed_id:
+            return
 
     try:
         start_time = time.time()
@@ -152,11 +153,13 @@ def process_frame(data, frame_id):
         h, w = frame.shape[:2]
 
         if intrinsics and intrinsics.get("fx"):
-            processor._pose_solver.set_camera_intrinsics(
+            processor.set_camera_intrinsics(
                 fx=intrinsics["fx"],
                 fy=intrinsics["fy"],
                 cx=intrinsics.get("cx", w / 2),
                 cy=intrinsics.get("cy", h / 2),
+                frame_width=intrinsics.get("width"),
+                frame_height=intrinsics.get("height"),
             )
 
         corners, inlier_src, inlier_dst, detected, confidence = processor.detect(frame)
@@ -175,20 +178,19 @@ def process_frame(data, frame_id):
 
         if detected and corners is not None and inlier_src is not None:
             result["corners"] = corners.reshape(-1, 2).tolist()
-            object_points = processor._map_2d_to_3d(inlier_src.reshape(-1, 2))
+            object_points = processor.map_2d_to_3d(inlier_src.reshape(-1, 2))
             image_points = inlier_dst.reshape(-1, 2)
 
             # Fix: PoseSolver uses 'compute_pose_ransac' instead of 'solve'
-            pose = processor._pose_solver.compute_pose_ransac(
-                object_points, image_points, w, h
-            )
+            pose = processor.compute_pose_ransac(object_points, image_points, w, h)
             if pose:
                 result["pose"] = pose
                 result["debug"]["tracking_state"] = pose.get("state")
                 result["debug"]["tracking_confidence"] = pose.get("confidence")
 
         if frame_id > 0:
-            last_processed_id = frame_id
+            with queue_lock:
+                last_processed_id = frame_id
         socketio.emit("result", result)
 
         if detected:

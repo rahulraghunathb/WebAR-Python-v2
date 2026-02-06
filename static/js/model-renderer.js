@@ -55,6 +55,14 @@ class ModelRenderer {
         // IMU manager reference (set externally)
         this.imuManager = null
 
+        // Anchor + snap settings for faster repositioning
+        this.anchorEnabled = true
+        this.anchorPosition = null
+        this.anchorQuaternion = null
+        this.anchorConfidenceMin = 0.6
+        this.anchorSnapDistance = 0.15 // meters
+        this.anchorSnapAngle = THREE.MathUtils.degToRad(8)
+
         // Debug
         this.debugMode = true
         this.debugObjects = {}
@@ -335,6 +343,27 @@ class ModelRenderer {
         let positionAlpha = 0.8
         let rotationAlpha = 0.8
 
+        // Anchor: snap quickly when pose jumps significantly with good confidence.
+        if (this.anchorEnabled) {
+            if (!this.anchorPosition) {
+                this.anchorPosition = position.clone()
+                this.anchorQuaternion = quaternion.clone()
+            } else {
+                const positionDelta = this.anchorPosition.distanceTo(position)
+                const angleDelta = this.anchorQuaternion.angleTo(quaternion)
+                const hasConfidence = typeof pose.confidence === 'number'
+                    ? pose.confidence >= this.anchorConfidenceMin
+                    : true
+
+                if (hasConfidence && (positionDelta > this.anchorSnapDistance || angleDelta > this.anchorSnapAngle)) {
+                    this.anchorPosition.copy(position)
+                    this.anchorQuaternion.copy(quaternion)
+                    positionAlpha = 0.95
+                    rotationAlpha = 0.9
+                }
+            }
+        }
+
         // If IMU is active and tracking, adjust smoothing based on device stability
         if (this.imuManager && this.imuManager.isActive && this.imuManager.hasReference) {
             const rotationMagnitude = this.imuManager.getRotationMagnitude()
@@ -349,6 +378,22 @@ class ModelRenderer {
                 // Device is very stable - heavy smoothing for stability
                 positionAlpha = 0.08
                 rotationAlpha = 0.06
+            }
+        }
+
+        // Increase responsiveness when position drift is large.
+        if (this.lastPosition) {
+            const positionError = this.lastPosition.distanceTo(this.targetPosition)
+            if (positionError > 0.05) {
+                positionAlpha = Math.min(0.9, Math.max(positionAlpha, positionError * 2))
+            }
+        }
+
+        // Increase responsiveness when rotation drift is large.
+        if (this.lastQuaternion) {
+            const rotationError = this.lastQuaternion.angleTo(this.targetQuaternion)
+            if (rotationError > 0.08) {
+                rotationAlpha = Math.min(0.9, Math.max(rotationAlpha, rotationError * 1.5))
             }
         }
 
@@ -413,6 +458,8 @@ class ModelRenderer {
         this.lastDistance = null
         this.targetPosition = null
         this.targetQuaternion = null
+        this.anchorPosition = null
+        this.anchorQuaternion = null
         this.imuHistory.clear()
         console.log('[Renderer] Pose reset')
     }

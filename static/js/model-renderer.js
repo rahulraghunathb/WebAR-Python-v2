@@ -45,12 +45,15 @@ class ModelRenderer {
 
         // IMU Baseline - for inter-frame prediction
         this.imuOrientationBase = null
-        this.imuPredictionEnabled = true
+        this.imuPredictionEnabled = false
         this.imuHistory = new Map() // ID -> Quaternion
 
         // Dead Reckoning state
         this.lastVisionTime = 0
         this.deadReckonLimit = 500 // ms to continue rotation without vision
+
+        // World-lock behavior (no IMU-driven camera prediction)
+        this.worldLockEnabled = true
 
         // IMU manager reference (set externally)
         this.imuManager = null
@@ -487,7 +490,11 @@ class ModelRenderer {
         const sinceVision = now - this.lastVisionTime
 
         // Apply IMU prediction / Dead Reckoning (6DoF)
-        const canPredict = this.imuPredictionEnabled && this.imuManager && this.imuManager.isActive && this.imuOrientationBase
+        const canPredict = !this.worldLockEnabled
+            && this.imuPredictionEnabled
+            && this.imuManager
+            && this.imuManager.isActive
+            && this.imuOrientationBase
         const shouldShow = this.isTracking && (sinceVision < this.deadReckonLimit)
 
         if (canPredict && shouldShow) {

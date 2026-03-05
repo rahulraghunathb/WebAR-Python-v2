@@ -27,6 +27,7 @@ class VisionManager {
         this.isReady = false
         this.isProcessing = false
         this.lastProcessTime = 0
+        this.frameId = 0
 
         // Throttle settings
         this.minIntervalMs = 80  // ~12 FPS max to server
@@ -38,6 +39,9 @@ class VisionManager {
             lastProcessTime: 0,
             dropCount: 0
         }
+
+        this.encodeCanvas = null
+        this.encodeCtx = null
     }
 
     /**
@@ -135,15 +139,20 @@ class VisionManager {
 
         // Convert to data URL for server
         // Note: This still has JPEG overhead, but we've prepared for future optimization
-        const canvas = document.createElement('canvas')
-        canvas.width = capture.width
-        canvas.height = capture.height
-        const ctx = canvas.getContext('2d')
-        ctx.putImageData(capture.imageData, 0, 0)
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
+        if (!this.encodeCanvas) {
+            this.encodeCanvas = document.createElement('canvas')
+            this.encodeCtx = this.encodeCanvas.getContext('2d')
+        }
+        if (this.encodeCanvas.width !== capture.width || this.encodeCanvas.height !== capture.height) {
+            this.encodeCanvas.width = capture.width
+            this.encodeCanvas.height = capture.height
+        }
+        this.encodeCtx.putImageData(capture.imageData, 0, 0)
+        const dataUrl = this.encodeCanvas.toDataURL('image/jpeg', 0.7)
 
         // Send to server (async - result comes via callback)
-        this.wsManager.sendFrameWithIntrinsics(dataUrl, intrinsics, Date.now())
+        this.frameId += 1
+        this.wsManager.sendFrameWithIntrinsics(dataUrl, intrinsics, this.frameId)
 
         this.metrics.framesProcessed++
         this.metrics.lastProcessTime = capture.captureTimeMs
@@ -212,6 +221,8 @@ class VisionManager {
     destroy() {
         this.isReady = false
         this.frameCapture = null
+        this.encodeCanvas = null
+        this.encodeCtx = null
         this.wsManager = null
     }
 }

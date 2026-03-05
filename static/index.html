@@ -21,8 +21,7 @@
       }
 
       body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         background: #000;
         color: #fff;
         overflow: hidden;
@@ -52,10 +51,8 @@
         left: 0;
         z-index: 2;
         pointer-events: none;
-        /* Width/height set by JS to match video */
       }
 
-      /* Detection badge */
       .detection-badge {
         position: absolute;
         top: 20px;
@@ -63,7 +60,7 @@
         transform: translateX(-50%);
         z-index: 10;
         background: rgba(0, 200, 100, 0.9);
-        color: #000;
+        color: #001a0d;
         padding: 8px 20px;
         border-radius: 20px;
         font-weight: 600;
@@ -76,7 +73,6 @@
         opacity: 1;
       }
 
-      /* Toggle button */
       .toggle-btn {
         position: absolute;
         bottom: 30px;
@@ -89,7 +85,7 @@
         background: rgba(255, 255, 255, 0.2);
         backdrop-filter: blur(10px);
         color: #fff;
-        font-size: 20px;
+        font-size: 18px;
         cursor: pointer;
         transition: all 0.2s;
       }
@@ -102,7 +98,6 @@
         background: rgba(0, 200, 100, 0.8);
       }
 
-      /* Start overlay */
       .start-overlay {
         position: absolute;
         inset: 0;
@@ -150,7 +145,7 @@
         color: #888;
         font-size: 14px;
         text-align: center;
-        max-width: 280px;
+        max-width: 320px;
       }
 
       .permission-status {
@@ -176,7 +171,10 @@
         color: #ff4444;
       }
 
-      /* Info panel */
+      .permission-item.optional {
+        color: #e0b84c;
+      }
+
       .info-panel {
         position: absolute;
         bottom: 100px;
@@ -229,7 +227,6 @@
         margin-bottom: 5px;
       }
 
-      /* Status dot */
       .status-dot {
         position: absolute;
         top: 20px;
@@ -245,7 +242,6 @@
         background: #00c870;
       }
 
-      /* Alignment tool link */
       .alignment-link {
         position: absolute;
         bottom: 30px;
@@ -268,19 +264,16 @@
       }
     </style>
   </head>
-
   <body>
     <div class="container">
       <video id="videoElement" autoplay playsinline muted></video>
       <canvas id="threeCanvas"></canvas>
 
       <div class="status-dot" id="statusDot"></div>
-      <div class="detection-badge" id="detectionBadge">Target Detected</div>
+      <div class="detection-badge" id="detectionBadge">Tracking Locked</div>
 
-      <button class="toggle-btn" id="toggleBtn">ℹ️</button>
-      <a href="/static/alignment-tool/index.html" class="alignment-link"
-        >🎯 Alignment</a
-      >
+      <button class="toggle-btn" id="toggleBtn">i</button>
+      <a href="/static/alignment-tool/index.html" class="alignment-link">Alignment</a>
 
       <div class="info-panel" id="infoPanel">
         <div class="info-row">
@@ -301,7 +294,7 @@
         </div>
 
         <div class="info-section">
-          <div class="info-section-title">📷 Camera</div>
+          <div class="info-section-title">Camera</div>
           <div class="info-row">
             <span class="info-label">Resolution</span>
             <span class="info-value" id="infoCamRes">-</span>
@@ -317,14 +310,10 @@
         </div>
 
         <div class="info-section">
-          <div class="info-section-title">📍 6DoF Pose</div>
+          <div class="info-section-title">Pose</div>
           <div class="info-row">
             <span class="info-label">Position</span>
             <span class="info-value" id="infoPosePos">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Rotation</span>
-            <span class="info-value" id="infoPoseRot">-</span>
           </div>
           <div class="info-row">
             <span class="info-label">Distance</span>
@@ -333,55 +322,46 @@
         </div>
 
         <div class="info-section">
-          <div class="info-section-title">📱 IMU Sensors</div>
+          <div class="info-section-title">IMU</div>
           <div class="info-row">
             <span class="info-label">Status</span>
             <span class="info-value" id="infoImuStatus">-</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Alpha (Z)</span>
+            <span class="info-label">Alpha</span>
             <span class="info-value" id="infoImuAlpha">-</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Beta (X)</span>
+            <span class="info-label">Beta</span>
             <span class="info-value" id="infoImuBeta">-</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Gamma (Y)</span>
+            <span class="info-label">Gamma</span>
             <span class="info-value" id="infoImuGamma">-</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Linear Accel</span>
-            <span class="info-value" id="infoImuAccel">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Velocity</span>
+            <span class="info-label">Linear Velocity</span>
             <span class="info-value" id="infoImuVel">-</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Rotation Δ</span>
+            <span class="info-label">Rotation Delta</span>
             <span class="info-value" id="infoImuDelta">-</span>
           </div>
         </div>
       </div>
 
       <div class="start-overlay" id="startOverlay">
-        <div class="start-title">🎯 WebAR SDK</div>
-        <div class="start-subtitle" id="startStatus">Initializing...</div>
+        <div class="start-title">WebAR Tracker</div>
+        <div class="start-subtitle" id="startStatus">Connecting to server...</div>
         <div class="permission-status" id="permissionStatus">
-          <div class="permission-item" id="permCamera">⏳ Camera</div>
-          <div class="permission-item" id="permMotion">⏳ Motion Sensors</div>
-          <div class="permission-item" id="permServer">
-            ⏳ Server Connection
-          </div>
+          <div class="permission-item" id="permCamera">Pending Camera</div>
+          <div class="permission-item" id="permMotion">Pending Motion Sensors</div>
+          <div class="permission-item" id="permServer">Pending Server Connection</div>
         </div>
-        <button class="start-btn" id="startBtn" disabled>
-          Start AR Experience
-        </button>
+        <button class="start-btn" id="startBtn" disabled>Start AR Experience</button>
       </div>
     </div>
 
-    <!-- Scripts -->
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -389,285 +369,195 @@
     <script src="/static/js/websocket.js"></script>
     <script src="/static/js/camera-intrinsics.js"></script>
     <script src="/static/js/device-motion.js"></script>
+    <script src="/static/js/model-transform.js"></script>
     <script src="/static/js/model-renderer.js"></script>
-    <!-- Vision Processing (Phase 1: Frame Capture Infrastructure) -->
-    <script src="/static/js/frame-capture.js"></script>
-    <script src="/static/js/vision-manager.js"></script>
     <script>
-      /**
-       * WebAR Application
-       * High-end 6DoF image tracking with proper camera intrinsics
-       */
       class WebARApp {
         constructor() {
-          // Managers
           this.intrinsicsManager = new CameraIntrinsicsManager()
           this.cameraManager = new CameraManager()
           this.wsManager = new WebSocketManager()
-          this.modelRenderer = new ModelRenderer("threeCanvas")
+          this.modelRenderer = new ModelRenderer('threeCanvas')
           this.imuManager = new DeviceMotionManager()
 
-          // DOM elements
-          this.video = document.getElementById("videoElement")
-          this.statusDot = document.getElementById("statusDot")
-          this.badge = document.getElementById("detectionBadge")
-          this.panel = document.getElementById("infoPanel")
-          this.toggleBtn = document.getElementById("toggleBtn")
-          this.startOverlay = document.getElementById("startOverlay")
-          this.startBtn = document.getElementById("startBtn")
-          this.startStatus = document.getElementById("startStatus")
+          this.video = document.getElementById('videoElement')
+          this.statusDot = document.getElementById('statusDot')
+          this.badge = document.getElementById('detectionBadge')
+          this.panel = document.getElementById('infoPanel')
+          this.toggleBtn = document.getElementById('toggleBtn')
+          this.startOverlay = document.getElementById('startOverlay')
+          this.startBtn = document.getElementById('startBtn')
+          this.startStatus = document.getElementById('startStatus')
 
-          // State
           this.running = false
           this.showInfo = false
-          this.waiting = false
-          this.lastSend = 0
           this.pose = null
           this.debug = {}
+          this.frameSequence = 0
+          this.lastSend = 0
+          this.currentSendInterval = 45
+          this.minSendInterval = 35
+          this.maxSendInterval = 80
 
-          // FPS tracking
           this.fps = 0
           this.frameCount = 0
-          this.frameCounter = 0
           this.lastFpsTime = performance.now()
 
-          // Initialize
+          this.sendCanvas = document.createElement('canvas')
+          this.sendCtx = this.sendCanvas.getContext('2d', { alpha: false })
+
           this.cameraManager.setVideoElement(this.video)
           this.setupEvents()
           this.init()
         }
 
-        async init() {
-          this.startStatus.textContent = "Requesting permissions..."
-
-          // 1. Request camera permission (this must happen first from user gesture context)
-          const permissions =
-            await this.intrinsicsManager.requestAllPermissions()
-
-          // 2. Request IMU permission separately (must be from user gesture on iOS)
-          // We'll request this during the start button click
-          this.updatePermissionUI(permissions)
-
-          // 3. Connect to backend
-          this.startStatus.textContent = "Connecting to server..."
+        init() {
+          this.setPermissionState('permCamera', 'pending', 'Pending Camera')
+          this.setPermissionState('permMotion', 'optional', 'Optional Motion Sensors')
+          this.setPermissionState('permServer', 'pending', 'Pending Server Connection')
           this.connectWebSocket()
         }
 
-        updatePermissionUI(permissions) {
-          const camEl = document.getElementById("permCamera")
-          const motionEl = document.getElementById("permMotion")
-
-          if (permissions.camera) {
-            camEl.textContent = "✓ Camera"
-            camEl.classList.add("granted")
-          } else {
-            camEl.textContent = "✗ Camera (required)"
-            camEl.classList.add("denied")
+        setPermissionState(elementId, state, label) {
+          const element = document.getElementById(elementId)
+          element.classList.remove('granted', 'denied', 'optional')
+          if (state && state !== 'pending') {
+            element.classList.add(state)
           }
-
-          if (permissions.motion || permissions.orientation) {
-            motionEl.textContent = "✓ Motion Sensors"
-            motionEl.classList.add("granted")
-          } else {
-            motionEl.textContent = "○ Motion Sensors (optional)"
-          }
+          element.textContent = label
         }
 
         setupEvents() {
-          this.startBtn.addEventListener("click", () => this.start())
-
-          this.toggleBtn.addEventListener("click", () => {
+          this.startBtn.addEventListener('click', () => this.start())
+          this.toggleBtn.addEventListener('click', () => {
             this.showInfo = !this.showInfo
-            this.panel.classList.toggle("visible", this.showInfo)
-            this.toggleBtn.classList.toggle("active", this.showInfo)
+            this.panel.classList.toggle('visible', this.showInfo)
+            this.toggleBtn.classList.toggle('active', this.showInfo)
           })
-
-          // Handle resize
-          window.addEventListener("resize", () => this.handleResize())
+          window.addEventListener('resize', () => this.handleResize())
         }
 
         connectWebSocket() {
-          const serverEl = document.getElementById("permServer")
-
           this.wsManager.onConnect(() => {
-            this.statusDot.classList.add("connected")
-            serverEl.textContent = "✓ Server Connected"
-            serverEl.classList.add("granted")
+            this.statusDot.classList.add('connected')
+            this.setPermissionState('permServer', 'granted', 'Server Connected')
           })
 
           this.wsManager.onDisconnect(() => {
-            this.statusDot.classList.remove("connected")
-            serverEl.textContent = "✗ Server Disconnected"
-            serverEl.classList.remove("granted")
-            serverEl.classList.add("denied")
+            this.statusDot.classList.remove('connected')
+            this.setPermissionState('permServer', 'denied', 'Server Disconnected')
+            this.startBtn.disabled = true
           })
 
           this.wsManager.onStatus((data) => {
             if (data.ready) {
-              this.startStatus.textContent = "Ready to start"
+              this.startStatus.textContent = 'Ready to start'
               this.startBtn.disabled = false
+            } else {
+              this.startStatus.textContent = data.error || 'Target is not ready'
             }
           })
 
           this.wsManager.onResult((data) => this.handleResult(data))
-          this.wsManager.onError(() => {
-            this.waiting = false
+          this.wsManager.onError((error) => {
+            const message = error && error.message ? error.message : 'Connection error'
+            this.startStatus.textContent = message
           })
 
-          this.wsManager.connect()
-        }
-
-        handleResult(data) {
-          this.debug = data.debug || {}
-
-          if (data.detected && data.pose) {
-            this.pose = data.pose
-            this.badge.classList.add("visible")
-
-            // Set IMU reference on first detection (for stability tracking)
-            if (this.imuManager.isActive && !this.imuManager.hasReference) {
-              this.imuManager.setReference()
-              console.log("[App] IMU reference set on first detection")
-            }
-
-            // Update 3D renderer with 6DoF pose
-            this.modelRenderer.updatePose(data.pose)
-          } else {
-            this.pose = null
-            this.badge.classList.remove("visible")
-            this.modelRenderer.hide()
-
-            // Reset pose smoothing when tracking is lost
-            this.modelRenderer.resetPose()
-
-            // Clear IMU reference when tracking is lost
-            if (this.imuManager.hasReference) {
-              this.imuManager.clearReference()
-            }
-          }
-
-          // Update backend-dependent UI
-          this.updateBackendInfo()
+          this.wsManager.connect().catch((error) => {
+            this.startStatus.textContent = error.message
+          })
         }
 
         async start() {
+          if (this.running) {
+            return
+          }
+
+          this.startBtn.disabled = true
+
           try {
-            // Request IMU permission first (MUST be in user gesture handler for iOS)
-            this.startStatus.textContent = "Requesting motion sensors..."
-            const imuGranted = await this.imuManager.requestPermission()
-
-            // Update permission UI for IMU
-            const motionEl = document.getElementById("permMotion")
-            if (imuGranted) {
-              motionEl.textContent = "✓ Motion Sensors"
-              motionEl.classList.add("granted")
-              motionEl.classList.remove("denied")
-              console.log("[App] IMU permission granted")
-
-              // Connect IMU manager to renderer for sensor fusion
-              this.modelRenderer.setIMUManager(this.imuManager)
-            } else {
-              motionEl.textContent = "✗ Motion Sensors"
-              motionEl.classList.add("denied")
-              console.log("[App] IMU permission denied or not available")
-            }
-
-            this.startStatus.textContent = "Starting camera..."
-
-            // Start camera with optimal settings
+            this.startStatus.textContent = 'Starting camera...'
             await this.cameraManager.start()
+            this.setPermissionState('permCamera', 'granted', 'Camera Ready')
 
-            // Wait for video to be ready
             await new Promise((resolve) => {
               if (this.video.videoWidth > 0) {
                 resolve()
-              } else {
-                this.video.addEventListener("loadedmetadata", resolve, {
-                  once: true,
-                })
+                return
               }
+              this.video.addEventListener('loadedmetadata', resolve, { once: true })
             })
 
-            // CRITICAL: Initialize canonical intrinsics from actual video resolution
-            // This is the ONE place where FOV is computed and locked
-            this.intrinsicsManager.initializeFromVideoStream(
+            const intrinsics = this.intrinsicsManager.initializeFromVideoStream(
               this.video.videoWidth,
               this.video.videoHeight
             )
 
-            // Get intrinsics (now properly initialized)
-            const intrinsics = this.intrinsicsManager.getCanonicalIntrinsics()
-
-            // Set intrinsics on renderer - FOV will be locked here
             this.modelRenderer.setIntrinsics({
               fovVertical: intrinsics.fovVertical,
               fingerprint: this.intrinsicsManager.getFingerprint(),
             })
 
-            // Resize renderer to match display
             this.handleResize()
 
-            // Update camera info display
-            document.getElementById(
-              "infoCamRes"
-            ).textContent = `${this.video.videoWidth}x${this.video.videoHeight}`
-            document.getElementById(
-              "infoCamFov"
-            ).textContent = `H:${intrinsics.fovHorizontal.toFixed(
-              1
-            )}° V:${intrinsics.fovVertical.toFixed(1)}°`
-            document.getElementById(
-              "infoCamFocal"
-            ).textContent = `${intrinsics.fx.toFixed(
-              0
-            )}, ${intrinsics.fy.toFixed(0)}`
+            document.getElementById('infoCamRes').textContent =
+              this.video.videoWidth + 'x' + this.video.videoHeight
+            document.getElementById('infoCamFov').textContent =
+              'H:' + intrinsics.fovHorizontal.toFixed(1) + ' V:' + intrinsics.fovVertical.toFixed(1)
+            document.getElementById('infoCamFocal').textContent =
+              intrinsics.fx.toFixed(0) + ', ' + intrinsics.fy.toFixed(0)
 
-            // Hide overlay and start loop
+            this.startStatus.textContent = 'Starting motion sensors...'
+            const imuGranted = await this.imuManager.requestPermission()
+            if (imuGranted) {
+              this.setPermissionState('permMotion', 'granted', 'Motion Sensors Ready')
+              this.modelRenderer.setIMUManager(this.imuManager)
+            } else {
+              this.setPermissionState('permMotion', 'optional', 'Motion Sensors Unavailable')
+            }
+
             this.running = true
-            this.startOverlay.classList.add("hidden")
+            this.startOverlay.classList.add('hidden')
+            this.lastSend = performance.now()
             this.loop()
-
-            console.log(
-              "[App] AR started with locked FOV:",
-              intrinsics.fovVertical.toFixed(1) + "°"
-            )
-          } catch (e) {
-            console.error("Start failed:", e)
-            this.startStatus.textContent = "Failed: " + e.message
+          } catch (error) {
+            console.error('[App] Start failed:', error)
+            this.startStatus.textContent = 'Failed: ' + error.message
+            this.startBtn.disabled = false
           }
         }
 
         handleResize() {
-          if (!this.video.videoWidth) return
+          if (!this.video.videoWidth) {
+            return
+          }
 
-          // Get display dimensions
           const rect = this.video.getBoundingClientRect()
-
-          // Resize 3D renderer
-          this.modelRenderer.resize(rect.width, rect.height)
+          this.modelRenderer.resize(rect.width, rect.height, {
+            sourceWidth: this.video.videoWidth,
+            sourceHeight: this.video.videoHeight,
+            fitMode: 'cover',
+          })
         }
 
         loop() {
-          if (!this.running) return
+          if (!this.running) {
+            return
+          }
+
           requestAnimationFrame(() => this.loop())
-
-          // Render 3D
           this.modelRenderer.render()
-
-          // Real-time UI updates (FPS, IMU)
+          this.badge.classList.toggle('visible', this.modelRenderer.hasTracking())
           this.updateLocalInfo()
 
-          // Send frame to backend (Continuous flow)
           const now = performance.now()
-          if (now - this.lastSend > 80) {
-            // ~12 FPS to backend. Server handles LIFO skips if it falls behind.
+          if (this.wsManager.isReady() && this.video.videoWidth && now - this.lastSend >= this.currentSendInterval) {
             this.sendFrame()
             this.lastSend = now
           }
 
-          // FPS counter
-          this.frameCount++
-          this.frameCounter++
+          this.frameCount += 1
           if (now - this.lastFpsTime > 1000) {
             this.fps = this.frameCount
             this.frameCount = 0
@@ -676,148 +566,137 @@
         }
 
         sendFrame() {
-          if (!this.video.videoWidth) return
-
-          // Create unique ID for this frame (timestamp)
-          const frameId = Date.now()
-
-          // Capture current IMU state as baseline for synchronization
-          if (this.imuManager.isActive && this.modelRenderer.saveIMUBaseline) {
-            this.modelRenderer.saveIMUBaseline(
-              frameId,
-              this.imuManager.quaternion
-            )
-          }
-
-          // Create canvas for frame
-          const canvas = document.createElement("canvas")
-
-          // Scale down for network efficiency (max 480px for cellular)
-          const maxDim = 480
+          const maxDim = 640
           const scale = Math.min(
             1,
             maxDim / Math.max(this.video.videoWidth, this.video.videoHeight)
           )
-          canvas.width = Math.floor(this.video.videoWidth * scale)
-          canvas.height = Math.floor(this.video.videoHeight * scale)
+          const frameWidth = Math.floor(this.video.videoWidth * scale)
+          const frameHeight = Math.floor(this.video.videoHeight * scale)
 
-          // Draw video frame
-          const ctx = canvas.getContext("2d")
-          ctx.drawImage(this.video, 0, 0, canvas.width, canvas.height)
-
-          // Get intrinsics for this frame size
-          const intrinsics = this.intrinsicsManager.getIntrinsicsForFrame(
-            canvas.width,
-            canvas.height
-          )
-
-          // Send with intrinsics and ID (Lower quality for cellular performance)
-          const frameData = canvas.toDataURL("image/jpeg", 0.5)
-
-          if (this.wsManager.sendFrameWithIntrinsics) {
-            this.wsManager.sendFrameWithIntrinsics(
-              frameData,
-              intrinsics,
-              frameId
-            )
-          } else {
-            this.wsManager.sendFrame(frameData)
+          if (this.sendCanvas.width !== frameWidth || this.sendCanvas.height !== frameHeight) {
+            this.sendCanvas.width = frameWidth
+            this.sendCanvas.height = frameHeight
           }
+
+          this.sendCtx.drawImage(this.video, 0, 0, frameWidth, frameHeight)
+
+          const frameId = ++this.frameSequence
+          if (this.imuManager.isActive) {
+            this.modelRenderer.saveIMUBaseline(frameId, this.imuManager.getTrackingQuaternion())
+          }
+
+          const intrinsics = this.intrinsicsManager.getIntrinsicsForFrame(frameWidth, frameHeight)
+          const frameData = this.sendCanvas.toDataURL('image/jpeg', 0.42)
+          this.wsManager.sendFrameWithIntrinsics(frameData, intrinsics, frameId)
+        }
+
+        computeNextSendInterval(debug) {
+          const procMs = Number((debug && debug.proc_ms) || 0)
+          if (!procMs) {
+            return this.currentSendInterval
+          }
+
+          let next = Math.max(this.minSendInterval, Math.min(this.maxSendInterval, procMs * 0.85))
+          if (Number((debug && debug.queue_drops) || 0) > 5) {
+            next = Math.min(this.maxSendInterval, next + 10)
+          }
+          return next
+        }
+
+        handleResult(data) {
+          this.debug = data.debug || {}
+          this.currentSendInterval = this.computeNextSendInterval(this.debug)
+
+          if (data.detected && data.pose) {
+            this.pose = data.pose
+            if (this.imuManager.isActive && !this.imuManager.hasReference) {
+              this.imuManager.setReference()
+            }
+            this.modelRenderer.updatePose(data)
+          } else {
+            this.modelRenderer.handleVisionGap(data.debug || {})
+            if (!this.modelRenderer.hasTracking()) {
+              this.pose = null
+              if (this.imuManager.hasReference) {
+                this.imuManager.clearReference()
+              }
+            }
+          }
+
+          this.updateBackendInfo()
         }
 
         updateBackendInfo() {
-          // Show tracking state with color coding
-          const state = this.debug.tracking_state || this.debug.state || "SEARCHING"
-          const stateEl = document.getElementById("infoStatus")
-          stateEl.textContent = state
+          const renderState = this.modelRenderer.getRenderState()
+          const stateEl = document.getElementById('infoStatus')
+          stateEl.textContent = renderState
           stateEl.style.color =
-            state === "TRACKING" ? "#0f0" : state === "LOST" ? "#f00" : "#fff"
+            renderState === 'TRACKING'
+              ? '#00ff88'
+              : renderState === 'PREDICTING'
+                ? '#f5c451'
+                : '#ffffff'
 
-          document.getElementById("infoInliers").textContent =
-            this.debug.inliers || 0
+          document.getElementById('infoInliers').textContent = this.debug.inliers || 0
 
-          // Use tracking confidence if available
           const confidence =
-            this.debug.tracking_confidence || this.debug.confidence || 0
-          document.getElementById("infoConfidence").textContent =
-            (confidence * 100).toFixed(0) + "%"
+            typeof this.debug.tracking_confidence === 'number'
+              ? this.debug.tracking_confidence
+              : typeof this.debug.confidence === 'number'
+                ? this.debug.confidence
+                : 0
+          document.getElementById('infoConfidence').textContent =
+            Math.round(confidence * 100) + '%'
 
-          if (this.pose) {
+          const snapshot = this.modelRenderer.getPoseSnapshot()
+          if (snapshot) {
+            const pos = snapshot.position
+            document.getElementById('infoPosePos').textContent =
+              pos.x.toFixed(2) + ', ' + pos.y.toFixed(2) + ', ' + pos.z.toFixed(2)
+            document.getElementById('infoPoseDist').textContent =
+              Math.sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).toFixed(2) + 'm'
+          } else if (this.pose && this.pose.position) {
             const pos = this.pose.position
-            const rot = this.pose.rotation
-
-            document.getElementById(
-              "infoPosePos"
-            ).textContent = `${pos.x.toFixed(2)}, ${pos.y.toFixed(
-              2
-            )}, ${pos.z.toFixed(2)}`
-
-            document.getElementById(
-              "infoPoseRot"
-            ).textContent = `${rot.x.toFixed(0)}°, ${rot.y.toFixed(
-              0
-            )}°, ${rot.z.toFixed(0)}°`
-
-            document.getElementById(
-              "infoPoseDist"
-            ).textContent = `${this.pose.distance.toFixed(2)}m`
+            document.getElementById('infoPosePos').textContent =
+              pos.x.toFixed(2) + ', ' + pos.y.toFixed(2) + ', ' + pos.z.toFixed(2)
+            document.getElementById('infoPoseDist').textContent =
+              this.pose.distance.toFixed(2) + 'm'
           } else {
-            document.getElementById("infoPosePos").textContent = "-"
-            document.getElementById("infoPoseRot").textContent = "-"
-            document.getElementById("infoPoseDist").textContent = "-"
+            document.getElementById('infoPosePos').textContent = '-'
+            document.getElementById('infoPoseDist').textContent = '-'
           }
         }
 
         updateLocalInfo() {
-          // FPS
-          document.getElementById("infoFps").textContent = this.fps
+          document.getElementById('infoFps').textContent = this.fps
 
-          // IMU Status
-          const imuStatus = this.imuManager.isActive ? "Active" : "Inactive"
-          const statusEl = document.getElementById("infoImuStatus")
-          statusEl.textContent = imuStatus
-          statusEl.style.color = this.imuManager.isActive ? "#0f0" : "#888"
+          const statusEl = document.getElementById('infoImuStatus')
+          statusEl.textContent = this.imuManager.isActive ? 'Active' : 'Inactive'
+          statusEl.style.color = this.imuManager.isActive ? '#00ff88' : '#888888'
 
           if (this.imuManager.isActive) {
             const orient = this.imuManager.orientation
-            document.getElementById("infoImuAlpha").textContent =
-              orient.alpha.toFixed(1) + "°"
-            document.getElementById("infoImuBeta").textContent =
-              orient.beta.toFixed(1) + "°"
-            document.getElementById("infoImuGamma").textContent =
-              orient.gamma.toFixed(1) + "°"
-
-            // 6DoF Diagnostics
-            const acc = this.imuManager.linAccel
-              ? this.imuManager.linAccel.length()
-              : 0
-            const vel = this.imuManager.linVel
-              ? this.imuManager.linVel.length()
-              : 0
-            document.getElementById("infoImuAccel").textContent =
-              acc.toFixed(2) + " m/s²"
-            document.getElementById("infoImuVel").textContent =
-              vel.toFixed(2) + " m/s"
-
-            // Show rotation delta from reference if available
-            if (this.imuManager.hasReference) {
-              const rotMag = this.imuManager.getRotationMagnitude()
-              document.getElementById("infoImuDelta").textContent =
-                rotMag.toFixed(1) + "°"
-            } else {
-              document.getElementById("infoImuDelta").textContent = "No ref"
-            }
+            document.getElementById('infoImuAlpha').textContent = orient.alpha.toFixed(1)
+            document.getElementById('infoImuBeta').textContent = orient.beta.toFixed(1)
+            document.getElementById('infoImuGamma').textContent = orient.gamma.toFixed(1)
+            document.getElementById('infoImuVel').textContent =
+              this.imuManager.linVel.length().toFixed(3) + ' m/s'
+            document.getElementById('infoImuDelta').textContent =
+              this.imuManager.hasReference
+                ? this.imuManager.getRotationMagnitude().toFixed(1) + ' deg'
+                : 'No reference'
           } else {
-            document.getElementById("infoImuAlpha").textContent = "-"
-            document.getElementById("infoImuBeta").textContent = "-"
-            document.getElementById("infoImuGamma").textContent = "-"
-            document.getElementById("infoImuDelta").textContent = "-"
+            document.getElementById('infoImuAlpha').textContent = '-'
+            document.getElementById('infoImuBeta').textContent = '-'
+            document.getElementById('infoImuGamma').textContent = '-'
+            document.getElementById('infoImuVel').textContent = '-'
+            document.getElementById('infoImuDelta').textContent = '-'
           }
         }
       }
 
-      // Start app when DOM is ready
-      document.addEventListener("DOMContentLoaded", () => {
+      document.addEventListener('DOMContentLoaded', () => {
         window.app = new WebARApp()
       })
     </script>

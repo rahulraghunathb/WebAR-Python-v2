@@ -1,509 +1,480 @@
 /**
- * Three.js 6DoF Model Renderer for WebAR
+ * Three.js model renderer for hybrid vision + IMU tracking.
  *
- * SIMPLE ANCHORING APPROACH:
- * - Model is placed at the center of the detected target image
- * - Model sits ON TOP of the target (positive Z direction)
- * - Model is normalized to fit within 0.3 meters (30cm)
- * - Camera moves around the static model based on 6DoF pose
- *
- * COORDINATE SYSTEM:
- * - World origin: Center of target image
- * - X-axis: Right (positive)
- * - Y-axis: Up (positive)
- * - Z-axis: Out of target toward viewer (positive)
- * - Units: Meters
+ * Vision frames provide world-space correction from the backend.
+ * Device motion provides immediate rotation updates between backend results.
  */
 
 class ModelRenderer {
-    constructor(canvasId) {
-        this.canvasId = canvasId || 'threeCanvas'
-        this.canvas = null
-        this.scene = null
-        this.camera = null
-        this.renderer = null
+  constructor(canvasId) {
+    this.canvasId = canvasId || 'threeCanvas'
+    this.canvas = null
+    this.scene = null
+    this.camera = null
+    this.renderer = null
 
-        // Model
-        this.model = null
-        this.modelLoaded = false
+    this.modelRoot = null
+    this.modelLoaded = false
+    this.modelMetadata = null
 
-        // Model configuration - SIMPLE, no alignment tool needed
-        this.modelConfig = {
-            scale: 0.5,           // Model size in meters (50cm)
-            standUpright: true    // Rotate model to stand on target plane
-        }
+    this.fov = 60
+    this.fovLocked = false
+    this.intrinsicsFingerprint = null
 
-        // Camera
-        this.fov = 60
-        this.fovLocked = false
+    this.imuManager = null
+    this.imuHistory = new Map()
 
-        // Pose state - for smoothing
-        this.lastPosition = null
-        this.lastQuaternion = null
-        this.lastDistance = null
-        this.isTracking = false
+    this.currentVisionPosition = new THREE.Vector3()
+    this.currentVisionQuaternion = new THREE.Quaternion()
+    this.renderedPosition = new THREE.Vector3()
+    this.renderedQuaternion = new THREE.Quaternion()
+    this.visionIMUQuaternion = null
 
-        // IMU Baseline - for inter-frame prediction
-        this.imuOrientationBase = null
-        this.imuPredictionEnabled = true
-        this.imuHistory = new Map() // ID -> Quaternion
+    this.hasVisionPose = false
+    this.isTracking = false
+    this.lastVisionTime = 0
+    this.lastGapTime = 0
+    this.predictionMaxMs = 450
+    this.translationPredictionWindowMs = 120
+    this.translationPredictionEnabled = true
 
-        // Dead Reckoning state
-        this.lastVisionTime = 0
-        this.deadReckonLimit = 500 // ms to continue rotation without vision
+    this.debugMode = true
+    this.debugObjects = {}
 
-        // IMU manager reference (set externally)
-        this.imuManager = null
+    this.init()
+  }
 
-        // Debug
-        this.debugMode = true
-        this.debugObjects = {}
-
-        this.init()
+  init() {
+    this.canvas = document.getElementById(this.canvasId)
+    if (!this.canvas) {
+      console.error('[Renderer] Canvas not found:', this.canvasId)
+      return
     }
 
-    init() {
-        this.canvas = document.getElementById(this.canvasId)
-        if (!this.canvas) {
-            console.error('[Renderer] Canvas not found:', this.canvasId)
-            return
-        }
+    this.scene = new THREE.Scene()
+    this.camera = new THREE.PerspectiveCamera(this.fov, 1, 0.01, 100)
+    this.camera.position.set(0, 0, 1)
+    this.camera.lookAt(0, 0, 0)
 
-        // Scene
-        this.scene = new THREE.Scene()
+    this.renderer = new THREE.WebGLRenderer({
+      canvas: this.canvas,
+      alpha: true,
+      antialias: true,
+    })
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    this.renderer.setClearColor(0x000000, 0)
+    this.renderer.outputEncoding = THREE.sRGBEncoding
 
-        // Camera - will be positioned by pose updates
-        this.camera = new THREE.PerspectiveCamera(this.fov, 1, 0.01, 100)
-        this.camera.position.set(0, 0, 1)
-        this.camera.lookAt(0, 0, 0)
+    this.setupLighting()
+    this.createDebugObjects()
 
-        // Renderer
-        this.renderer = new THREE.WebGLRenderer({
-            canvas: this.canvas,
-            alpha: true,
-            antialias: true
+    const profile = window.ModelTransformHelpers.getProfile()
+    this.loadModel(profile.assetUrl)
+    this.resize()
+  }
+
+  setupLighting() {
+    const ambient = new THREE.AmbientLight(0xffffff, 0.7)
+    this.scene.add(ambient)
+
+    const mainLight = new THREE.DirectionalLight(0xffffff, 0.85)
+    mainLight.position.set(0, 2, 2)
+    this.scene.add(mainLight)
+
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.35)
+    fillLight.position.set(0, -1, -1)
+    this.scene.add(fillLight)
+
+    const sideLight = new THREE.DirectionalLight(0xffffff, 0.25)
+    sideLight.position.set(2, 1, 0)
+    this.scene.add(sideLight)
+  }
+
+  createDebugObjects() {
+    const planeGeo = new THREE.PlaneGeometry(1, 1)
+    const planeMat = new THREE.MeshBasicMaterial({
+      color: 0x00ff66,
+      wireframe: true,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.4,
+    })
+    this.debugObjects.targetPlane = new THREE.Mesh(planeGeo, planeMat)
+    this.debugObjects.targetPlane.visible = false
+    this.scene.add(this.debugObjects.targetPlane)
+
+    this.debugObjects.axes = new THREE.AxesHelper(0.25)
+    this.debugObjects.axes.visible = false
+    this.scene.add(this.debugObjects.axes)
+
+    const sphereGeo = new THREE.SphereGeometry(0.02, 16, 16)
+    const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff3333 })
+    this.debugObjects.originMarker = new THREE.Mesh(sphereGeo, sphereMat)
+    this.debugObjects.originMarker.visible = false
+    this.scene.add(this.debugObjects.originMarker)
+  }
+
+  loadModel(url) {
+    const loader = new THREE.GLTFLoader()
+    loader.load(
+      url,
+      (gltf) => {
+        const profile = window.ModelTransformHelpers.getProfile()
+        const rig = window.ModelTransformHelpers.buildModelRig(gltf.scene, profile)
+        this.modelRoot = rig.root
+        this.modelRoot.visible = false
+        this.modelMetadata = rig.metadata
+        this.scene.add(this.modelRoot)
+        this.modelLoaded = true
+
+        console.log('[Renderer] Model loaded:', {
+          scaleFactor: rig.metadata.scaleFactor.toFixed(4),
+          maxDim: rig.metadata.maxDim.toFixed(4),
         })
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-        this.renderer.setClearColor(0x000000, 0)
-        this.renderer.outputEncoding = THREE.sRGBEncoding
+      },
+      undefined,
+      (error) => {
+        console.error('[Renderer] Model load error:', error)
+      }
+    )
+  }
 
-        // Lighting - good for viewing from all angles
-        this.setupLighting()
-
-        // Debug visualization
-        this.createDebugObjects()
-
-        // Load the 3D model
-        this.loadModel('/static/assets/ranger-3d-model.glb')
-
-        // Initial resize
-        this.resize()
-
-        console.log('[Renderer] Initialized')
+  setIntrinsics(intrinsics) {
+    if (!intrinsics) {
+      return
     }
 
-    setupLighting() {
-        // Ambient light for base illumination
-        const ambient = new THREE.AmbientLight(0xffffff, 0.6)
-        this.scene.add(ambient)
+    const nextFingerprint = intrinsics.fingerprint || null
+    const canUpdateFov =
+      !this.fovLocked ||
+      (nextFingerprint && nextFingerprint !== this.intrinsicsFingerprint)
 
-        // Main directional light (from above-front)
-        const mainLight = new THREE.DirectionalLight(0xffffff, 0.8)
-        mainLight.position.set(0, 2, 2)
-        this.scene.add(mainLight)
-
-        // Fill light (from below-back) to see underside
-        const fillLight = new THREE.DirectionalLight(0xffffff, 0.4)
-        fillLight.position.set(0, -1, -1)
-        this.scene.add(fillLight)
-
-        // Side lights for depth
-        const leftLight = new THREE.DirectionalLight(0xffffff, 0.3)
-        leftLight.position.set(-2, 1, 0)
-        this.scene.add(leftLight)
-
-        const rightLight = new THREE.DirectionalLight(0xffffff, 0.3)
-        rightLight.position.set(2, 1, 0)
-        this.scene.add(rightLight)
+    if (
+      canUpdateFov &&
+      intrinsics.fovVertical &&
+      intrinsics.fovVertical > 20 &&
+      intrinsics.fovVertical < 120
+    ) {
+      this.fov = intrinsics.fovVertical
+      this.camera.fov = this.fov
+      this.fovLocked = true
+      this.intrinsicsFingerprint = nextFingerprint
     }
 
-    createDebugObjects() {
-        // Target plane visualization (green wireframe at Z=0)
-        const planeGeo = new THREE.PlaneGeometry(1, 1)
-        const planeMat = new THREE.MeshBasicMaterial({
-            color: 0x00ff00,
-            wireframe: true,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.5
-        })
-        this.debugObjects.targetPlane = new THREE.Mesh(planeGeo, planeMat)
-        this.debugObjects.targetPlane.visible = false
-        this.scene.add(this.debugObjects.targetPlane)
+    this.camera.updateProjectionMatrix()
+  }
 
-        // Axes helper at world origin
-        // Red = X (right), Green = Y (up), Blue = Z (toward camera)
-        this.debugObjects.axes = new THREE.AxesHelper(0.2)
-        this.debugObjects.axes.visible = false
-        this.scene.add(this.debugObjects.axes)
-
-        // Small sphere at origin to mark exact center
-        const sphereGeo = new THREE.SphereGeometry(0.02, 16, 16)
-        const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff0000 })
-        this.debugObjects.originMarker = new THREE.Mesh(sphereGeo, sphereMat)
-        this.debugObjects.originMarker.visible = false
-        this.scene.add(this.debugObjects.originMarker)
+  resize(width, height, viewport) {
+    if (!this.renderer || !this.canvas) {
+      return
     }
 
-    loadModel(url) {
-        const loader = new THREE.GLTFLoader()
-
-        loader.load(
-            url,
-            (gltf) => {
-                this.model = gltf.scene
-
-                // Calculate bounding box of original model
-                const box = new THREE.Box3().setFromObject(this.model)
-                const size = box.getSize(new THREE.Vector3())
-                const center = box.getCenter(new THREE.Vector3())
-                const minY = box.min.y  // Bottom of model
-
-                // Find the largest dimension for scaling
-                const maxDim = Math.max(size.x, size.y, size.z)
-                const scaleFactor = this.modelConfig.scale / maxDim
-
-                // STEP 1: Center model horizontally, but put feet at origin
-                // Move so bottom of model (minY) is at Y=0
-                this.model.position.set(-center.x, -minY, -center.z)
-
-                // STEP 2: Create container for scaling
-                this.modelContainer = new THREE.Group()
-                this.modelContainer.add(this.model)
-
-                // Apply scale
-                this.modelContainer.scale.setScalar(scaleFactor)
-
-                // STEP 3: Position model
-                // In Three.js: target is in XY plane at Z=0
-                // We want the model to stand ON the target (feet at Z=0, head at +Z)
-                // So we rotate its Y-axis height to align with Three.js Z-axis
-                this.modelContainer.rotation.x = Math.PI / 2
-
-                // Move container to origin (center of target)
-                this.modelContainer.position.set(0, 0, 0)
-
-                // Initially hidden until tracking starts
-                this.modelContainer.visible = false
-                this.scene.add(this.modelContainer)
-
-                this.modelLoaded = true
-
-                console.log('[Renderer] Model loaded:',
-                    'size:', size.x.toFixed(3), size.y.toFixed(3), size.z.toFixed(3),
-                    '| scale:', scaleFactor.toFixed(4),
-                    '| final height:', (size.y * scaleFactor).toFixed(3) + 'm'
-                )
-            },
-            (progress) => {
-                if (progress.total > 0) {
-                    const pct = Math.round(progress.loaded / progress.total * 100)
-                    if (pct % 25 === 0) console.log('[Renderer] Loading:', pct + '%')
-                }
-            },
-            (error) => {
-                console.error('[Renderer] Model load error:', error)
-            }
-        )
+    if (!width || !height) {
+      const rect = this.canvas.parentElement && this.canvas.parentElement.getBoundingClientRect()
+      width = (rect && rect.width) || window.innerWidth
+      height = (rect && rect.height) || window.innerHeight
     }
 
-    /**
-     * Set camera FOV from intrinsics
-     * Called once at initialization
-     */
-    setIntrinsics(intrinsics) {
-        if (!intrinsics || this.fovLocked) return
+    this.renderer.setSize(width, height, false)
+    this.canvas.style.width = width + 'px'
+    this.canvas.style.height = height + 'px'
 
-        if (intrinsics.fovVertical && intrinsics.fovVertical > 20 && intrinsics.fovVertical < 120) {
-            this.fov = intrinsics.fovVertical
-            this.camera.fov = this.fov
-            this.camera.updateProjectionMatrix()
-            this.fovLocked = true
-            console.log('[Renderer] FOV set:', this.fov.toFixed(1) + '°')
-        }
+    const sourceWidth = viewport && viewport.sourceWidth
+    const sourceHeight = viewport && viewport.sourceHeight
+    const fitMode = (viewport && viewport.fitMode) || 'cover'
+
+    if (sourceWidth && sourceHeight && fitMode === 'cover') {
+      const scale = Math.max(width / sourceWidth, height / sourceHeight)
+      const visibleWidth = width / scale
+      const visibleHeight = height / scale
+      const offsetX = (sourceWidth - visibleWidth) / 2
+      const offsetY = (sourceHeight - visibleHeight) / 2
+
+      this.camera.aspect = sourceWidth / sourceHeight
+      this.camera.setViewOffset(
+        sourceWidth,
+        sourceHeight,
+        offsetX,
+        offsetY,
+        visibleWidth,
+        visibleHeight
+      )
+    } else {
+      this.camera.clearViewOffset()
+      this.camera.aspect = width / height
     }
 
-    /**
-     * Update display size
-     */
-    resize(width, height) {
-        if (!this.renderer || !this.canvas) return
+    this.camera.updateProjectionMatrix()
+  }
 
-        if (!width || !height) {
-            const rect = this.canvas.parentElement?.getBoundingClientRect()
-            width = rect?.width || window.innerWidth
-            height = rect?.height || window.innerHeight
-        }
-
-        this.renderer.setSize(width, height, false)
-        this.canvas.style.width = width + 'px'
-        this.canvas.style.height = height + 'px'
-
-        this.camera.aspect = width / height
-        this.camera.updateProjectionMatrix()
+  updatePose(result) {
+    const pose = result && result.pose
+    if (!pose || !pose.matrix) {
+      return
     }
 
-    /**
-     * Update camera pose from backend
-     *
-     * WORLD-ANCHORED APPROACH:
-     * - Model is fixed at world origin (on target image)
-     * - Camera moves according to 6DoF pose from vision
-     * - IMU data is used to enhance rotation smoothing
-     * - Heavy smoothing prevents jitter while maintaining responsiveness
-     */
-    updatePose(pose) {
-        if (!pose || !pose.matrix) {
-            this.hide()
-            this.isTracking = false
-            return
-        }
+    const matrixValues = pose.matrix
+    if (
+      !Array.isArray(matrixValues) ||
+      matrixValues.length !== 16 ||
+      matrixValues.some((value) => !isFinite(value))
+    ) {
+      return
+    }
 
-        const m = pose.matrix
+    const matrix = new THREE.Matrix4()
+    matrix.fromArray(matrixValues)
 
-        // Validate matrix
-        if (!Array.isArray(m) || m.length !== 16 || m.some(v => !isFinite(v))) {
-            console.warn('[Renderer] Invalid pose matrix')
-            this.hide()
-            return
-        }
+    const position = new THREE.Vector3()
+    const quaternion = new THREE.Quaternion()
+    const scale = new THREE.Vector3()
+    matrix.decompose(position, quaternion, scale)
 
-        // Create matrix from column-major array
-        const matrix = new THREE.Matrix4()
-        matrix.fromArray(m)
+    const distance = position.length()
+    if (distance > 10 || distance < 0.05) {
+      return
+    }
 
-        // Decompose to get position and rotation
-        const position = new THREE.Vector3()
-        const quaternion = new THREE.Quaternion()
-        const scale = new THREE.Vector3()
-        matrix.decompose(position, quaternion, scale)
+    const confidence =
+      typeof pose.confidence === 'number'
+        ? pose.confidence
+        : typeof result.debug?.tracking_confidence === 'number'
+          ? result.debug.tracking_confidence
+          : typeof result.debug?.confidence === 'number'
+            ? result.debug.confidence
+            : 0.5
 
-        // Get distance from origin
-        const distance = position.length()
+    if (!this.hasVisionPose) {
+      this.currentVisionPosition.copy(position)
+      this.currentVisionQuaternion.copy(quaternion)
+      this.renderedPosition.copy(position)
+      this.renderedQuaternion.copy(quaternion)
+      this.camera.position.copy(position)
+      this.camera.quaternion.copy(quaternion)
+    } else {
+      const positionError = this.currentVisionPosition.distanceTo(position)
+      const rotationError = this.currentVisionQuaternion.angleTo(quaternion)
+      const shouldSnap =
+        confidence >= 0.7 || positionError > 0.08 || rotationError > THREE.MathUtils.degToRad(10)
 
-        // Sanity check
-        if (distance > 10 || distance < 0.1) {
-            return  // Ignore invalid poses, keep last state
-        }
+      if (shouldSnap) {
+        this.currentVisionPosition.copy(position)
+        this.currentVisionQuaternion.copy(quaternion)
+      } else {
+        const positionBlend = Math.max(0.78, confidence)
+        const rotationBlend = Math.max(0.85, confidence)
+        this.currentVisionPosition.lerp(position, positionBlend)
+        this.currentVisionQuaternion.slerp(quaternion, rotationBlend)
+      }
+    }
 
-        // Initialize smoothed values on first detection
-        if (!this.lastPosition) {
-            this.lastPosition = position.clone()
-            this.lastQuaternion = quaternion.clone()
-            this.lastDistance = distance
-            this.targetPosition = position.clone()
-            this.targetQuaternion = quaternion.clone()
-            console.log('[Renderer] Initial pose set at distance:', distance.toFixed(2) + 'm')
-        }
+    const frameId = result.id || pose.id
+    this.visionIMUQuaternion = this.consumeIMUBaseline(frameId) || this.getCurrentIMUQuaternion()
+    this.renderedPosition.copy(this.currentVisionPosition)
+    this.renderedQuaternion.copy(this.currentVisionQuaternion)
+    this.camera.position.copy(this.renderedPosition)
+    this.camera.quaternion.copy(this.renderedQuaternion)
 
-        // Store target pose from vision
-        this.targetPosition.copy(position)
-        this.targetQuaternion.copy(quaternion)
+    this.hasVisionPose = true
+    this.isTracking = true
+    this.lastVisionTime = performance.now()
+    this.lastGapTime = 0
+    this.show()
 
-        // SYNC: Retrieve the exact IMU state when this frame was captured
-        if (pose.id && this.imuHistory.has(pose.id)) {
-            const histIMU = this.imuHistory.get(pose.id)
-            this.imuOrientationBase = new THREE.Quaternion(
-                histIMU.x, histIMU.y, histIMU.z, histIMU.w
-            )
-            // Cleanup history up to this ID
-            for (let key of this.imuHistory.keys()) {
-                if (key <= pose.id) this.imuHistory.delete(key)
-                else break
-            }
-        } else if (this.imuManager && this.imuManager.isActive) {
-            // Fallback: use current IMU if ID sync fails
-            const quat = this.imuManager.rawQuaternion || this.imuManager.quaternion
-            this.imuOrientationBase = new THREE.Quaternion(
-                quat.x, quat.y, quat.z, quat.w
-            )
-        }
+    if (this.imuManager) {
+      this.imuManager.resetInertialState()
+    }
+  }
 
-        // ADAPTIVE SMOOTHING - increased for Frame-IMU Sync
-        // We rely on 60 FPS IMU prediction for smoothness, so we can
-        // apply vision corrections almost instantly (0.8 alpha).
-        let positionAlpha = 0.8
-        let rotationAlpha = 0.8
+  handleVisionGap() {
+    if (!this.hasVisionPose) {
+      this.hide()
+      return
+    }
+    this.lastGapTime = performance.now()
+  }
 
-        // If IMU is active and tracking, adjust smoothing based on device stability
-        if (this.imuManager && this.imuManager.isActive && this.imuManager.hasReference) {
-            const rotationMagnitude = this.imuManager.getRotationMagnitude()
+  setIMUManager(imuManager) {
+    this.imuManager = imuManager
+  }
 
-            // If device is moving a lot (IMU shows rotation), be more responsive
-            // If device is stable, apply heavier smoothing
-            if (rotationMagnitude > 10) {
-                // Device is rotating significantly - be more responsive
-                positionAlpha = 0.25
-                rotationAlpha = 0.20
-            } else if (rotationMagnitude < 3) {
-                // Device is very stable - heavy smoothing for stability
-                positionAlpha = 0.08
-                rotationAlpha = 0.06
-            }
-        }
+  saveIMUBaseline(id, quat) {
+    if (!id || !quat) {
+      return
+    }
 
-        // Smooth position
-        this.lastPosition.lerp(this.targetPosition, positionAlpha)
+    this.imuHistory.set(id, { ...quat })
+    while (this.imuHistory.size > 120) {
+      const firstKey = this.imuHistory.keys().next().value
+      this.imuHistory.delete(firstKey)
+    }
+  }
 
-        // Smooth rotation using slerp
-        this.lastQuaternion.slerp(this.targetQuaternion, rotationAlpha)
+  consumeIMUBaseline(id) {
+    if (!id || !this.imuHistory.has(id)) {
+      return null
+    }
 
-        // Apply smoothed pose to camera
-        this.camera.position.copy(this.lastPosition)
-        this.camera.quaternion.copy(this.lastQuaternion)
+    const history = this.imuHistory.get(id)
+    for (const key of this.imuHistory.keys()) {
+      if (key <= id) {
+        this.imuHistory.delete(key)
+      }
+    }
 
-        // Update distance for display
-        this.lastDistance = this.lastPosition.length()
+    return new THREE.Quaternion(history.x, history.y, history.z, history.w)
+  }
 
-        // Sync last vision time
-        this.lastVisionTime = performance.now()
+  getCurrentIMUQuaternion() {
+    if (!this.imuManager || !this.imuManager.isActive) {
+      return null
+    }
 
-        // Mark as tracking
-        this.isTracking = true
+    const quat = this.imuManager.getTrackingQuaternion()
+    return new THREE.Quaternion(quat.x, quat.y, quat.z, quat.w)
+  }
 
-        // Show model and debug objects
+  predictPose(elapsedMs) {
+    const predictedPosition = this.currentVisionPosition.clone()
+    const predictedQuaternion = this.currentVisionQuaternion.clone()
+
+    if (this.visionIMUQuaternion) {
+      const currentIMU = this.getCurrentIMUQuaternion()
+      if (currentIMU) {
+        const delta = this.visionIMUQuaternion.clone().invert().multiply(currentIMU)
+        predictedQuaternion.multiply(delta)
+      }
+    }
+
+    if (
+      this.translationPredictionEnabled &&
+      this.imuManager &&
+      this.imuManager.linVel &&
+      elapsedMs < this.translationPredictionWindowMs &&
+      this.imuManager.linVel.length() > 0.02
+    ) {
+      const velocityWorld = this.imuManager.linVel.clone().applyQuaternion(predictedQuaternion)
+      const dt = elapsedMs / 1000
+      const translationDelta = velocityWorld.multiplyScalar(dt * 0.15)
+      if (translationDelta.length() > 0.08) {
+        translationDelta.setLength(0.08)
+      }
+      predictedPosition.add(translationDelta)
+    }
+
+    this.renderedPosition.copy(predictedPosition)
+    this.renderedQuaternion.copy(predictedQuaternion)
+    return {
+      position: predictedPosition,
+      quaternion: predictedQuaternion,
+    }
+  }
+
+  hasTracking() {
+    return this.isTracking && this.hasVisionPose
+  }
+
+  getRenderState() {
+    if (!this.hasVisionPose) {
+      return 'SEARCHING'
+    }
+
+    const sinceVision = performance.now() - this.lastVisionTime
+    if (sinceVision < 90) {
+      return 'TRACKING'
+    }
+    if (sinceVision < this.predictionMaxMs) {
+      return 'PREDICTING'
+    }
+    return 'SEARCHING'
+  }
+
+  getPoseSnapshot() {
+    if (!this.hasTracking()) {
+      return null
+    }
+
+    return {
+      position: {
+        x: this.renderedPosition.x,
+        y: this.renderedPosition.y,
+        z: this.renderedPosition.z,
+      },
+    }
+  }
+
+  expireTracking() {
+    this.isTracking = false
+    this.hasVisionPose = false
+    this.visionIMUQuaternion = null
+    this.hide()
+  }
+
+  resetPose() {
+    this.currentVisionPosition.set(0, 0, 0)
+    this.currentVisionQuaternion.identity()
+    this.renderedPosition.set(0, 0, 0)
+    this.renderedQuaternion.identity()
+    this.imuHistory.clear()
+    this.visionIMUQuaternion = null
+    this.hasVisionPose = false
+    this.isTracking = false
+    this.hide()
+  }
+
+  show() {
+    if (this.modelRoot) {
+      this.modelRoot.visible = true
+    }
+    if (this.debugMode) {
+      this.debugObjects.targetPlane.visible = true
+      this.debugObjects.axes.visible = true
+      this.debugObjects.originMarker.visible = true
+    }
+  }
+
+  hide() {
+    if (this.modelRoot) {
+      this.modelRoot.visible = false
+    }
+    this.debugObjects.targetPlane.visible = false
+    this.debugObjects.axes.visible = false
+    this.debugObjects.originMarker.visible = false
+  }
+
+  render() {
+    if (!this.renderer || !this.scene || !this.camera) {
+      return
+    }
+
+    if (this.hasVisionPose) {
+      const elapsedMs = performance.now() - this.lastVisionTime
+      if (elapsedMs > this.predictionMaxMs) {
+        this.expireTracking()
+      } else {
+        const predicted = this.predictPose(elapsedMs)
+        this.camera.position.copy(predicted.position)
+        this.camera.quaternion.copy(predicted.quaternion)
         this.show()
-
-        // RESET INERTIAL STATE
-        if (this.imuManager) {
-            this.imuManager.resetInertialState()
-        }
+      }
     }
 
-    /**
-     * Set IMU manager reference for sensor fusion
-     */
-    setIMUManager(imuManager) {
-        this.imuManager = imuManager
-        console.log('[Renderer] IMU manager connected')
+    this.renderer.render(this.scene, this.camera)
+  }
+
+  setDebug(enabled) {
+    this.debugMode = enabled
+    if (!enabled) {
+      this.hide()
+      if (this.modelRoot) {
+        this.modelRoot.visible = this.hasTracking()
+      }
     }
+  }
 
-    /**
-     * Store IMU state for a frame being sent (synchronization)
-     */
-    saveIMUBaseline(id, quat) {
-        if (!this.imuHistory) this.imuHistory = new Map()
-
-        // Use raw quaternion if available for zero-lag prediction baseline
-        this.imuHistory.set(id, { ...quat })
-
-        // Safety cap on history size
-        if (this.imuHistory.size > 100) {
-            const firstKey = this.imuHistory.keys().next().value
-            this.imuHistory.delete(firstKey)
-        }
-    }
-
-    /**
-     * Reset pose smoothing (call when tracking is lost/regained)
-     */
-    resetPose() {
-        this.lastPosition = null
-        this.lastQuaternion = null
-        this.lastDistance = null
-        this.targetPosition = null
-        this.targetQuaternion = null
-        this.imuHistory.clear()
-        console.log('[Renderer] Pose reset')
-    }
-
-    show() {
-        if (this.modelContainer) this.modelContainer.visible = true
-        if (this.debugMode) {
-            this.debugObjects.targetPlane.visible = true
-            this.debugObjects.axes.visible = true
-            this.debugObjects.originMarker.visible = true
-        }
-    }
-
-    hide() {
-        if (this.modelContainer) this.modelContainer.visible = false
-        this.debugObjects.targetPlane.visible = false
-        this.debugObjects.axes.visible = false
-        this.debugObjects.originMarker.visible = false
-    }
-
-    render() {
-        if (!this.renderer || !this.scene || !this.camera) return
-
-        const now = performance.now()
-        const sinceVision = now - this.lastVisionTime
-
-        // Apply IMU prediction / Dead Reckoning (6DoF)
-        const canPredict = this.imuPredictionEnabled && this.imuManager && this.imuManager.isActive && this.imuOrientationBase
-        const shouldShow = this.isTracking && (sinceVision < this.deadReckonLimit)
-
-        if (canPredict && shouldShow) {
-            const dt = sinceVision / 1000 // seconds
-
-            // --- 1. ROTATIONAL PREDICTION (Physics Correct) ---
-            const q = this.imuManager.rawQuaternion || this.imuManager.quaternion
-            const currentIMU = new THREE.Quaternion(q.x, q.y, q.z, q.w)
-
-            // LOCAL Delta = inv(Base) * Current
-            const localDelta = this.imuOrientationBase.clone().invert().multiply(currentIMU)
-
-            // Pose = lastVision * localDelta
-            const projectedQuaternion = this.lastQuaternion.clone().multiply(localDelta)
-            this.camera.quaternion.copy(projectedQuaternion)
-
-            // --- 2. TRANSLATIONAL PREDICTION (Inertial) ---
-            // x = xo + v*dt
-            if (this.imuManager.linVel && this.imuManager.linVel.length() > 0.01) {
-                const velocityWorld = this.imuManager.linVel.clone()
-
-                // Accelerometers measure in local phone frame. 
-                // We must project that velocity into the world frame using the device orientation.
-                // Note: currentIMU is the phone's orientation relative to Earth.
-                velocityWorld.applyQuaternion(projectedQuaternion)
-
-                const translationDelta = velocityWorld.multiplyScalar(dt)
-                this.camera.position.addVectors(this.lastPosition, translationDelta)
-            } else {
-                this.camera.position.copy(this.lastPosition)
-            }
-
-            // Ensure model is visible during dead reckoning
-            if (this.modelContainer) this.modelContainer.visible = true
-        } else if (!shouldShow) {
-            this.hide()
-        }
-
-        this.renderer.render(this.scene, this.camera)
-    }
-
-    setDebug(enabled) {
-        this.debugMode = enabled
-        if (!enabled) {
-            this.debugObjects.targetPlane.visible = false
-            this.debugObjects.axes.visible = false
-            this.debugObjects.originMarker.visible = false
-        }
-    }
-
-    /**
-     * Adjust model size (in meters)
-     */
-    setModelScale(sizeInMeters) {
-        this.modelConfig.scale = sizeInMeters
-        // Would need to reload model to apply - or recalculate on existing
-        console.log('[Renderer] Model scale set to:', sizeInMeters + 'm')
-    }
-
-    getFOV() {
-        return this.fov
-    }
+  getFOV() {
+    return this.fov
+  }
 }
 
-// Export
 window.ModelRenderer = ModelRenderer

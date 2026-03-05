@@ -170,6 +170,35 @@ class PoseSolver:
         """Get tracking confidence (0-1)."""
         return self._confidence
 
+    def get_target_size(self) -> Tuple[float, float]:
+        """Return the current physical target size in meters."""
+        return float(self._target_width), float(self._target_height)
+
+    def get_status(self) -> Dict[str, float]:
+        """Return the current tracking state and confidence."""
+        return {
+            "tracking_state": self._state.value,
+            "tracking_confidence": float(self._confidence),
+        }
+
+    def report_no_detection(self) -> None:
+        """Advance the tracking state machine when a frame contains no target."""
+        if self._state == TrackingState.TRACKING:
+            self._state = TrackingState.LOST
+            self._lost_frames = 1
+        elif self._state == TrackingState.LOST:
+            self._lost_frames += 1
+            if self._lost_frames > self.LOST_FRAME_THRESHOLD:
+                self._state = TrackingState.SEARCHING
+                self._last_rvec = None
+                self._last_tvec = None
+                self._last_pose = None
+                self._last_pose = None
+        else:
+            self._state = TrackingState.SEARCHING
+
+        self._confidence = 0.0
+
     def compute_pose_ransac(self, object_points: np.ndarray, image_points: np.ndarray,
                             frame_width: int, frame_height: int,
                             fov_degrees: float = 60.0,

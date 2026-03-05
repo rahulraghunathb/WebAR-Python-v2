@@ -360,8 +360,7 @@ class ImageProcessor(IImageProcessor):
         h, w = self._target_image.shape[:2]
 
         # Get physical dimensions from pose_solver
-        phys_w = self._pose_solver._target_width
-        phys_h = self._pose_solver._target_height
+        phys_w, phys_h = self._pose_solver.get_target_size()
 
         # Map pixel coords to physical coords (centered at origin, Y-down like image)
         pts_3d = np.zeros((len(pts_2d), 3), dtype=np.float32)
@@ -431,7 +430,17 @@ class ImageProcessor(IImageProcessor):
     
     def get_debug_info(self):
         return self._debug_info.copy()
-    
+
+    def get_pose_status(self) -> Dict:
+        """Return the current pose solver tracking status."""
+        return self._pose_solver.get_status()
+
+    def notify_no_detection(self) -> None:
+        """Advance pose tracking state when a frame has no valid target."""
+        self._pose_solver.report_no_detection()
+        self._debug_info.update(self._pose_solver.get_status())
+        self._debug_info['state'] = 'NO_DETECTION'
+
     def compute_pose_6dof(self, object_points: np.ndarray, image_points: np.ndarray,
                           frame_width: int, frame_height: int,
                           fov_degrees: float = 60.0) -> Optional[Dict]:

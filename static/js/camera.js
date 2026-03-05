@@ -4,155 +4,129 @@
  */
 
 class CameraManager {
-    constructor() {
-        this.stream = null;
-        this.videoElement = null;
-        this.facingMode = 'environment'; // Use back camera by default on mobile
-        this.constraints = {
-            video: {
-                facingMode: this.facingMode,
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            },
-            audio: false
-        };
+  constructor() {
+    this.stream = null
+    this.track = null
+    this.videoElement = null
+    this.facingMode = 'environment'
+    this.constraints = {
+      video: {
+        facingMode: this.facingMode,
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 60 },
+      },
+      audio: false,
+    }
+  }
+
+  setVideoElement(videoElement) {
+    this.videoElement = videoElement
+  }
+
+  async start() {
+    if (!this.videoElement) {
+      throw new Error('Video element not set')
     }
 
-    /**
-     * Initialize camera with video element
-     * @param {HTMLVideoElement} videoElement - Video element to attach stream to
-     */
-    setVideoElement(videoElement) {
-        this.videoElement = videoElement;
+    this.stop()
+
+    this.stream = await navigator.mediaDevices.getUserMedia(this.constraints)
+    this.track = this.stream.getVideoTracks()[0] || null
+    this.videoElement.srcObject = this.stream
+
+    await new Promise((resolve, reject) => {
+      const onLoadedMetadata = () => {
+        this.videoElement
+          .play()
+          .then(resolve)
+          .catch(reject)
+      }
+
+      this.videoElement.addEventListener('loadedmetadata', onLoadedMetadata, {
+        once: true,
+      })
+    })
+
+    return this.stream
+  }
+
+  stop() {
+    if (this.stream) {
+      this.stream.getTracks().forEach((track) => track.stop())
+    }
+    this.stream = null
+    this.track = null
+    if (this.videoElement) {
+      this.videoElement.srcObject = null
+    }
+  }
+
+  async switchCamera() {
+    this.facingMode = this.facingMode === 'environment' ? 'user' : 'environment'
+    this.constraints.video.facingMode = this.facingMode
+    return this.start()
+  }
+
+  async hasMultipleCameras() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      return devices.filter((device) => device.kind === 'videoinput').length > 1
+    } catch {
+      return false
+    }
+  }
+
+  getDimensions() {
+    if (!this.videoElement) {
+      return { width: 0, height: 0 }
+    }
+    return {
+      width: this.videoElement.videoWidth,
+      height: this.videoElement.videoHeight,
+    }
+  }
+
+  getActiveTrack() {
+    return this.track
+  }
+
+  getTrackSettings() {
+    return this.track && this.track.getSettings ? this.track.getSettings() : {}
+  }
+
+  getTrackCapabilities() {
+    return this.track && this.track.getCapabilities ? this.track.getCapabilities() : {}
+  }
+
+  captureFrame(canvas) {
+    if (!this.videoElement || !this.stream) {
+      return null
     }
 
-    /**
-     * Start camera stream
-     * @returns {Promise<MediaStream>} - The camera stream
-     */
-    async start() {
-        if (!this.videoElement) {
-            throw new Error('Video element not set');
-        }
+    const { width, height } = this.getDimensions()
+    canvas.width = width
+    canvas.height = height
 
-        try {
-            // Stop existing stream if any
-            this.stop();
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(this.videoElement, 0, 0, width, height)
 
-            // Request camera access
-            this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
+    return canvas
+  }
 
-            // Attach to video element
-            this.videoElement.srcObject = this.stream;
-
-            // Wait for video to be ready
-            await new Promise((resolve) => {
-                this.videoElement.onloadedmetadata = () => {
-                    this.videoElement.play().then(resolve);
-                };
-            });
-
-            return this.stream;
-        } catch (error) {
-            console.error('Camera access error:', error);
-            throw error;
-        }
+  getFrameAsBase64(quality = 0.7) {
+    if (!this.videoElement || !this.stream) {
+      return null
     }
 
-    /**
-     * Stop camera stream
-     */
-    stop() {
-        if (this.stream) {
-            this.stream.getTracks().forEach(track => track.stop());
-            this.stream = null;
-        }
-        if (this.videoElement) {
-            this.videoElement.srcObject = null;
-        }
-    }
+    const canvas = document.createElement('canvas')
+    this.captureFrame(canvas)
+    return canvas.toDataURL('image/jpeg', quality)
+  }
 
-    /**
-     * Switch between front and back camera
-     * @returns {Promise<MediaStream>} - New camera stream
-     */
-    async switchCamera() {
-        this.facingMode = this.facingMode === 'environment' ? 'user' : 'environment';
-        this.constraints.video.facingMode = this.facingMode;
-        return this.start();
-    }
-
-    /**
-     * Check if device has multiple cameras
-     * @returns {Promise<boolean>}
-     */
-    async hasMultipleCameras() {
-        try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
-            return videoDevices.length > 1;
-        } catch {
-            return false;
-        }
-    }
-
-    /**
-     * Get video dimensions
-     * @returns {{width: number, height: number}}
-     */
-    getDimensions() {
-        if (!this.videoElement) {
-            return { width: 0, height: 0 };
-        }
-        return {
-            width: this.videoElement.videoWidth,
-            height: this.videoElement.videoHeight
-        };
-    }
-
-    /**
-     * Capture current frame as canvas
-     * @param {HTMLCanvasElement} canvas - Canvas to draw frame on
-     * @returns {HTMLCanvasElement}
-     */
-    captureFrame(canvas) {
-        if (!this.videoElement || !this.stream) {
-            return null;
-        }
-
-        const { width, height } = this.getDimensions();
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(this.videoElement, 0, 0, width, height);
-
-        return canvas;
-    }
-
-    /**
-     * Get current frame as base64 JPEG
-     * @param {number} quality - JPEG quality (0-1)
-     * @returns {string} - Base64 encoded JPEG
-     */
-    getFrameAsBase64(quality = 0.7) {
-        if (!this.videoElement || !this.stream) {
-            return null;
-        }
-
-        const canvas = document.createElement('canvas');
-        this.captureFrame(canvas);
-        return canvas.toDataURL('image/jpeg', quality);
-    }
-
-    /**
-     * Check if camera is currently active
-     * @returns {boolean}
-     */
-    isActive() {
-        return this.stream !== null && this.stream.active;
-    }
+  isActive() {
+    return this.stream !== null && this.stream.active
+  }
 }
 
-// Export singleton instance
-window.CameraManager = CameraManager;
+window.CameraManager = CameraManager

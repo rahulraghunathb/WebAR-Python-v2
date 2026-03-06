@@ -1,18 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta
-      name="apple-mobile-web-app-status-bar-style"
-      content="black-translucent"
-    />
-    <title>WebAR Image Tracking</title>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Custom Tracker AR</title>
     <style>
       * {
         margin: 0;
@@ -43,6 +37,7 @@
         height: 100%;
         object-fit: cover;
         z-index: 1;
+        background: #000;
       }
 
       #threeCanvas {
@@ -108,6 +103,7 @@
         align-items: center;
         gap: 20px;
         background: rgba(0, 0, 0, 0.95);
+        padding: 20px;
       }
 
       .start-overlay.hidden {
@@ -115,7 +111,7 @@
       }
 
       .start-btn {
-        padding: 15px 40px;
+        padding: 15px 32px;
         font-size: 18px;
         font-weight: 600;
         border: none;
@@ -142,10 +138,11 @@
       }
 
       .start-subtitle {
-        color: #888;
+        color: #b0b0b0;
         font-size: 14px;
         text-align: center;
-        max-width: 320px;
+        max-width: 360px;
+        line-height: 1.5;
       }
 
       .permission-status {
@@ -351,14 +348,16 @@
       </div>
 
       <div class="start-overlay" id="startOverlay">
-        <div class="start-title">WebAR Tracker</div>
-        <div class="start-subtitle" id="startStatus">Connecting to server...</div>
-        <div class="permission-status" id="permissionStatus">
-          <div class="permission-item" id="permCamera">Pending Camera</div>
-          <div class="permission-item" id="permMotion">Pending Motion Sensors</div>
-          <div class="permission-item" id="permServer">Pending Server Connection</div>
+        <div class="start-title">Custom Tracker AR</div>
+        <div class="start-subtitle" id="startStatus">
+          Waiting for the tracker backend. Camera access will be requested only after you tap start.
         </div>
-        <button class="start-btn" id="startBtn" disabled>Start AR Experience</button>
+        <div class="permission-status" id="permissionStatus">
+          <div class="permission-item" id="permCamera">Pending Camera Permission</div>
+          <div class="permission-item" id="permMotion">Optional Motion Sensors</div>
+          <div class="permission-item" id="permServer">Pending Tracker Connection</div>
+        </div>
+        <button class="start-btn" id="startBtn" disabled>Grant Camera Access &amp; Start Tracking</button>
       </div>
     </div>
 
@@ -372,7 +371,7 @@
     <script src="/static/js/model-transform.js"></script>
     <script src="/static/js/model-renderer.js"></script>
     <script>
-      class WebARApp {
+      class CustomTrackerApp {
         constructor() {
           this.intrinsicsManager = new CameraIntrinsicsManager()
           this.cameraManager = new CameraManager()
@@ -411,10 +410,19 @@
           this.init()
         }
 
+        log(message, data) {
+          if (typeof data === 'undefined') {
+            console.info('[CustomTracker]', message)
+            return
+          }
+          console.info('[CustomTracker]', message, data)
+        }
+
         init() {
-          this.setPermissionState('permCamera', 'pending', 'Pending Camera')
+          this.log('Booting custom tracker runtime')
+          this.setPermissionState('permCamera', 'pending', 'Pending Camera Permission')
           this.setPermissionState('permMotion', 'optional', 'Optional Motion Sensors')
-          this.setPermissionState('permServer', 'pending', 'Pending Server Connection')
+          this.setPermissionState('permServer', 'pending', 'Pending Tracker Connection')
           this.connectWebSocket()
         }
 
@@ -433,25 +441,29 @@
             this.showInfo = !this.showInfo
             this.panel.classList.toggle('visible', this.showInfo)
             this.toggleBtn.classList.toggle('active', this.showInfo)
+            this.log('Info panel toggled', { open: this.showInfo })
           })
           window.addEventListener('resize', () => this.handleResize())
         }
 
         connectWebSocket() {
           this.wsManager.onConnect(() => {
+            this.log('Socket connected')
             this.statusDot.classList.add('connected')
-            this.setPermissionState('permServer', 'granted', 'Server Connected')
+            this.setPermissionState('permServer', 'granted', 'Tracker Connected')
           })
 
-          this.wsManager.onDisconnect(() => {
+          this.wsManager.onDisconnect((reason) => {
+            this.log('Socket disconnected', { reason: reason })
             this.statusDot.classList.remove('connected')
-            this.setPermissionState('permServer', 'denied', 'Server Disconnected')
+            this.setPermissionState('permServer', 'denied', 'Tracker Disconnected')
             this.startBtn.disabled = true
           })
 
           this.wsManager.onStatus((data) => {
+            this.log('Tracker status received', data)
             if (data.ready) {
-              this.startStatus.textContent = 'Ready to start'
+              this.startStatus.textContent = 'Tracker ready. Tap start to grant camera permission.'
               this.startBtn.disabled = false
             } else {
               this.startStatus.textContent = data.error || 'Target is not ready'
@@ -461,10 +473,12 @@
           this.wsManager.onResult((data) => this.handleResult(data))
           this.wsManager.onError((error) => {
             const message = error && error.message ? error.message : 'Connection error'
+            this.log('Socket error', error)
             this.startStatus.textContent = message
           })
 
           this.wsManager.connect().catch((error) => {
+            this.log('Socket connect failed', error)
             this.startStatus.textContent = error.message
           })
         }
@@ -474,11 +488,13 @@
             return
           }
 
+          this.log('Start requested by user')
           this.startBtn.disabled = true
 
           try {
-            this.startStatus.textContent = 'Starting camera...'
+            this.startStatus.textContent = 'Requesting camera permission...'
             await this.cameraManager.start()
+            this.log('Camera started', this.cameraManager.getTrackSettings())
             this.setPermissionState('permCamera', 'granted', 'Camera Ready')
 
             await new Promise((resolve) => {
@@ -493,6 +509,7 @@
               this.video.videoWidth,
               this.video.videoHeight
             )
+            this.log('Intrinsics initialized', intrinsics)
 
             this.modelRenderer.setIntrinsics({
               fovVertical: intrinsics.fovVertical,
@@ -508,21 +525,25 @@
             document.getElementById('infoCamFocal').textContent =
               intrinsics.fx.toFixed(0) + ', ' + intrinsics.fy.toFixed(0)
 
-            this.startStatus.textContent = 'Starting motion sensors...'
+            this.startStatus.textContent = 'Requesting motion sensor access...'
             const imuGranted = await this.imuManager.requestPermission()
             if (imuGranted) {
               this.setPermissionState('permMotion', 'granted', 'Motion Sensors Ready')
               this.modelRenderer.setIMUManager(this.imuManager)
+              this.log('Motion sensors enabled')
             } else {
               this.setPermissionState('permMotion', 'optional', 'Motion Sensors Unavailable')
+              this.log('Motion sensors unavailable')
             }
 
             this.running = true
             this.startOverlay.classList.add('hidden')
             this.lastSend = performance.now()
+            this.log('Tracker loop started')
             this.loop()
           } catch (error) {
-            console.error('[App] Start failed:', error)
+            console.error('[CustomTracker] Start failed', error)
+            this.setPermissionState('permCamera', 'denied', 'Camera Denied')
             this.startStatus.textContent = 'Failed: ' + error.message
             this.startBtn.disabled = false
           }
@@ -567,10 +588,7 @@
 
         sendFrame() {
           const maxDim = 640
-          const scale = Math.min(
-            1,
-            maxDim / Math.max(this.video.videoWidth, this.video.videoHeight)
-          )
+          const scale = Math.min(1, maxDim / Math.max(this.video.videoWidth, this.video.videoHeight))
           const frameWidth = Math.floor(this.video.videoWidth * scale)
           const frameHeight = Math.floor(this.video.videoHeight * scale)
 
@@ -646,8 +664,7 @@
               : typeof this.debug.confidence === 'number'
                 ? this.debug.confidence
                 : 0
-          document.getElementById('infoConfidence').textContent =
-            Math.round(confidence * 100) + '%'
+          document.getElementById('infoConfidence').textContent = Math.round(confidence * 100) + '%'
 
           const snapshot = this.modelRenderer.getPoseSnapshot()
           if (snapshot) {
@@ -660,8 +677,7 @@
             const pos = this.pose.position
             document.getElementById('infoPosePos').textContent =
               pos.x.toFixed(2) + ', ' + pos.y.toFixed(2) + ', ' + pos.z.toFixed(2)
-            document.getElementById('infoPoseDist').textContent =
-              this.pose.distance.toFixed(2) + 'm'
+            document.getElementById('infoPoseDist').textContent = this.pose.distance.toFixed(2) + 'm'
           } else {
             document.getElementById('infoPosePos').textContent = '-'
             document.getElementById('infoPoseDist').textContent = '-'
@@ -697,7 +713,7 @@
       }
 
       document.addEventListener('DOMContentLoaded', () => {
-        window.app = new WebARApp()
+        window.app = new CustomTrackerApp()
       })
     </script>
   </body>

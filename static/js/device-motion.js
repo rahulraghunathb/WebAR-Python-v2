@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Device Motion Manager
  *
  * High-rate device orientation is used for immediate visual response between

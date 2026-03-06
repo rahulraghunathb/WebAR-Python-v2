@@ -1,4 +1,4 @@
-"""
+﻿"""
 FLANN-based Feature Matcher implementation.
 Faster than brute-force matching for large feature sets.
 """

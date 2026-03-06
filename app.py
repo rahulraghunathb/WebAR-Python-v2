@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import os
 import threading
 import time
@@ -7,25 +7,25 @@ from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 from flask_socketio import SocketIO, emit
 
 from src.detectors import ORBDetector
 from src.matchers import BFMatcher
 from src.processor import ImageProcessor
 
-app = Flask(__name__, static_folder="static", template_folder="static")
-app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "target-detection-secret-key")
+app = Flask(__name__, static_folder='static', template_folder='static')
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'custom-tracker-secret-key')
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
 DEFAULT_TARGET_PATH = os.path.join(
-    os.path.dirname(__file__), "static", "assets", "ranger-base-image.jpg"
+    os.path.dirname(__file__), 'static', 'assets', 'ranger-base-image.jpg'
 )
-DEFAULT_TARGET_BLOB_PATH = DEFAULT_TARGET_PATH.replace(".jpg", ".webarimg")
+DEFAULT_TARGET_BLOB_PATH = DEFAULT_TARGET_PATH.replace('.jpg', '.webarimg')
 
 SESSION_LOCK = threading.Lock()
-SESSIONS: Dict[str, "ClientSession"] = {}
+SESSIONS: Dict[str, 'ClientSession'] = {}
 
 
 def create_processor() -> ImageProcessor:
@@ -33,7 +33,7 @@ def create_processor() -> ImageProcessor:
     matcher = BFMatcher(ratio_threshold=0.8, min_matches=8)
     processor = ImageProcessor(detector=detector, matcher=matcher)
     if not load_default_target(processor):
-        raise RuntimeError("Target image could not be loaded")
+        raise RuntimeError('Target image could not be loaded')
     return processor
 
 
@@ -41,15 +41,14 @@ def load_default_target(processor: ImageProcessor) -> bool:
     if os.path.exists(DEFAULT_TARGET_BLOB_PATH) and processor.load_target_blob(
         DEFAULT_TARGET_BLOB_PATH
     ):
-        print(f"[Target] Preprocessed target loaded: {DEFAULT_TARGET_BLOB_PATH}")
+        print(f'[Tracker] Preprocessed target loaded: {DEFAULT_TARGET_BLOB_PATH}')
         return True
 
     if os.path.exists(DEFAULT_TARGET_PATH):
         target_image = cv2.imread(DEFAULT_TARGET_PATH, cv2.IMREAD_COLOR)
-        if target_image is not None:
-            if processor.set_target(target_image):
-                print(f"[Target] Target image loaded: {DEFAULT_TARGET_PATH}")
-                return True
+        if target_image is not None and processor.set_target(target_image):
+            print(f'[Tracker] Target image loaded: {DEFAULT_TARGET_PATH}')
+            return True
     return False
 
 
@@ -58,8 +57,8 @@ try:
     TARGET_INFO = TEMPLATE_PROCESSOR.get_target_info()
 except Exception as exc:
     TEMPLATE_PROCESSOR = None
-    TARGET_INFO = {"ready": False, "error": str(exc)}
-    print(f"[Target] Failed to initialize template processor: {exc}")
+    TARGET_INFO = {'ready': False, 'error': str(exc)}
+    print(f'[Tracker] Failed to initialize template processor: {exc}')
 
 
 class ClientSession:
@@ -80,10 +79,11 @@ class ClientSession:
         try:
             self.processor = create_processor()
             self.ready = self.processor.is_ready()
+            print(f'[Tracker:{sid}] Session initialized ready={self.ready}')
         except Exception as exc:
             self.error = str(exc)
             self.ready = False
-            print(f"[Session:{sid}] Initialization failed: {exc}")
+            print(f'[Tracker:{sid}] Initialization failed: {exc}')
 
         if self.ready:
             self.worker = threading.Thread(target=self._frame_worker, daemon=True)
@@ -94,25 +94,26 @@ class ClientSession:
         keypoints = 0
         if self.processor and self.processor.is_ready():
             info = self.processor.get_target_info()
-            keypoints = info.get("keypoints_count", 0)
+            keypoints = info.get('keypoints_count', 0)
 
         return {
-            "connected": True,
-            "ready": self.ready,
-            "keypoints": keypoints,
-            "tracking_state": pose_status.get("tracking_state", "SEARCHING"),
-            "error": self.error,
+            'connected': True,
+            'ready': self.ready,
+            'keypoints': keypoints,
+            'tracking_state': pose_status.get('tracking_state', 'SEARCHING'),
+            'error': self.error,
         }
 
     def close(self) -> None:
         self.active = False
         self.frame_event.set()
+        print(f'[Tracker:{self.sid}] Session closed')
 
     def enqueue_frame(self, data) -> None:
         if not self.ready or not self.processor:
             return
 
-        frame_id = data.get("id", 0) if isinstance(data, dict) else 0
+        frame_id = data.get('id', 0) if isinstance(data, dict) else 0
 
         with self.queue_lock:
             if frame_id > 0 and frame_id <= self.last_processed_id:
@@ -139,16 +140,13 @@ class ClientSession:
 
     def _extract_frame_payload(self, data) -> Tuple[Optional[str], Optional[Dict]]:
         if isinstance(data, dict):
-            return data.get("image") or data.get("frame"), data.get("intrinsics")
+            return data.get('image') or data.get('frame'), data.get('intrinsics')
         return data, None
 
     def _decode_frame(self, encoded_data: str) -> Optional[np.ndarray]:
         if not encoded_data:
             return None
-        if "," in encoded_data:
-            _, encoded = encoded_data.split(",", 1)
-        else:
-            encoded = encoded_data
+        encoded = encoded_data.split(',', 1)[1] if ',' in encoded_data else encoded_data
         nparr = np.frombuffer(base64.b64decode(encoded), np.uint8)
         return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
@@ -170,14 +168,14 @@ class ClientSession:
 
             height, width = frame.shape[:2]
 
-            if intrinsics and intrinsics.get("fx"):
+            if intrinsics and intrinsics.get('fx'):
                 self.processor.set_camera_intrinsics(
-                    fx=intrinsics["fx"],
-                    fy=intrinsics["fy"],
-                    cx=intrinsics.get("cx", width / 2),
-                    cy=intrinsics.get("cy", height / 2),
-                    frame_width=intrinsics.get("width"),
-                    frame_height=intrinsics.get("height"),
+                    fx=intrinsics['fx'],
+                    fy=intrinsics['fy'],
+                    cx=intrinsics.get('cx', width / 2),
+                    cy=intrinsics.get('cy', height / 2),
+                    frame_width=intrinsics.get('width'),
+                    frame_height=intrinsics.get('height'),
                 )
 
             corners, inlier_src, inlier_dst, detected, confidence = self.processor.detect(frame)
@@ -186,81 +184,99 @@ class ClientSession:
 
             pose_status = self.processor.get_pose_status()
             result = {
-                "detected": detected,
-                "id": frame_id,
-                "frameSize": [width, height],
-                "debug": {
+                'detected': detected,
+                'id': frame_id,
+                'frameSize': [width, height],
+                'debug': {
                     **self.processor.get_debug_info(),
                     **pose_status,
-                    "confidence": confidence,
-                    "queue_drops": self.queue_drop_count,
-                    "proc_ms": int((time.time() - start_time) * 1000),
+                    'confidence': confidence,
+                    'queue_drops': self.queue_drop_count,
+                    'proc_ms': int((time.time() - start_time) * 1000),
                 },
             }
 
             if detected and corners is not None and inlier_src is not None and inlier_dst is not None:
-                result["corners"] = corners.reshape(-1, 2).tolist()
+                result['corners'] = corners.reshape(-1, 2).tolist()
                 object_points = self.processor.map_2d_to_3d(inlier_src.reshape(-1, 2))
                 image_points = inlier_dst.reshape(-1, 2)
-                pose = self.processor.compute_pose_ransac(
-                    object_points, image_points, width, height
-                )
+                pose = self.processor.compute_pose_ransac(object_points, image_points, width, height)
                 if pose:
-                    pose["id"] = frame_id
-                    result["pose"] = pose
-                    result["debug"]["tracking_state"] = pose.get("state")
-                    result["debug"]["tracking_confidence"] = pose.get("confidence")
+                    pose['id'] = frame_id
+                    result['pose'] = pose
+                    result['debug']['tracking_state'] = pose.get('state')
+                    result['debug']['tracking_confidence'] = pose.get('confidence')
 
             if frame_id > 0:
                 with self.queue_lock:
                     self.last_processed_id = max(self.last_processed_id, frame_id)
 
-            socketio.emit("result", result, to=self.sid)
+            socketio.emit('result', result, to=self.sid)
         except Exception as exc:
-            print(f"[Session:{self.sid}] Frame processing error: {exc}")
-            socketio.emit(
-                "error",
-                {"message": str(exc), "id": frame_id},
-                to=self.sid,
-            )
+            print(f'[Tracker:{self.sid}] Frame processing error: {exc}')
+            socketio.emit('error', {'message': str(exc), 'id': frame_id}, to=self.sid)
 
 
-@app.route("/")
+@app.route('/')
 def index():
-    return render_template("index.html")
+    return render_template('index.html')
 
 
-@app.route("/status")
+@app.route('/status')
 def status():
-    return jsonify(TARGET_INFO)
+    return jsonify(
+        {
+            **TARGET_INFO,
+            'tracking_mode': 'custom-server-cv-tracker',
+            'server_tracking': True,
+            'features': [
+                'camera-permission-required',
+                'socketio-frame-stream',
+                'orb-feature-matching',
+                'solvepnp-pose-estimation',
+                'imu-assisted-rendering',
+                'per-client-session-isolation',
+            ],
+        }
+    )
 
 
-@socketio.on("connect")
+@app.route('/favicon.ico')
+def favicon():
+    return Response(status=204)
+
+
+@app.route('/.well-known/appspecific/com.chrome.devtools.json')
+def chrome_devtools_probe():
+    return Response(status=204)
+
+
+@socketio.on('connect')
 def handle_connect():
     sid = request.sid
     session = ClientSession(sid)
 
     with SESSION_LOCK:
-        old_session = SESSIONS.pop(sid, None)
-        if old_session:
-            old_session.close()
-        SESSIONS[sid] = session
+      old_session = SESSIONS.pop(sid, None)
+      if old_session:
+          old_session.close()
+      SESSIONS[sid] = session
 
-    print(f"[Socket] Client connected: {sid}")
-    emit("status", session.get_status_payload())
+    print(f'[Socket] Client connected: {sid}')
+    emit('status', session.get_status_payload())
 
 
-@socketio.on("disconnect")
+@socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
     with SESSION_LOCK:
         session = SESSIONS.pop(sid, None)
     if session:
         session.close()
-    print(f"[Socket] Client disconnected: {sid}")
+    print(f'[Socket] Client disconnected: {sid}')
 
 
-@socketio.on("frame")
+@socketio.on('frame')
 def handle_frame(data):
     sid = request.sid
     with SESSION_LOCK:
@@ -272,17 +288,11 @@ def handle_frame(data):
             SESSIONS[sid] = session
 
     if not session.ready:
-        emit(
-            "error",
-            {"message": session.error or "Session is not ready"},
-            to=sid,
-        )
+        emit('error', {'message': session.error or 'Session is not ready'}, to=sid)
         return
 
     session.enqueue_frame(data)
 
 
-if __name__ == "__main__":
-    socketio.run(
-        app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True
-    )
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

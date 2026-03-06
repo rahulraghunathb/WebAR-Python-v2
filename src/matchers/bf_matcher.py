@@ -1,4 +1,4 @@
-"""
+﻿"""
 Brute-Force Feature Matcher implementation.
 Single Responsibility: Match feature descriptors only.
 """

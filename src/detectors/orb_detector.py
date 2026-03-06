@@ -1,4 +1,4 @@
-"""
+﻿"""
 ORB Feature Detector implementation.
 Single Responsibility: Detect and compute ORB features only.
 """

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Abstract interfaces following Interface Segregation Principle (ISP).
 Each interface defines a single responsibility for the detection pipeline.
 """

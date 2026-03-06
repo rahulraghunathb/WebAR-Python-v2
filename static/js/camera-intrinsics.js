@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Camera Intrinsics Manager - Verified FOV System
  *
  * MATHEMATICAL FOUNDATION:

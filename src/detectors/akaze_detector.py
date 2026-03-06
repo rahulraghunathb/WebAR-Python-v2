@@ -1,4 +1,4 @@
-"""
+﻿"""
 AKAZE Feature Detector implementation.
 Single Responsibility: Detect and compute AKAZE features only.
 AKAZE provides better accuracy than ORB with more robust keypoints.

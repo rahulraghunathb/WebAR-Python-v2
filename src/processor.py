@@ -1,4 +1,4 @@
-"""
+﻿"""
 Optimized Multi-Scale ORB Detection
 Best balance of performance and accuracy with no false positives.
 """

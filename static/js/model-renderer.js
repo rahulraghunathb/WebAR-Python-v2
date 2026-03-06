@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Three.js model renderer for hybrid vision + IMU tracking.
  *
  * Vision frames provide world-space correction from the backend.

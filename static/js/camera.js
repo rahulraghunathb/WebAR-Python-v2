@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Camera Module
  * Single Responsibility: Handle camera stream acquisition and management
  */

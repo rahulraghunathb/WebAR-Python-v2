@@ -1,4 +1,4 @@
-/**
+﻿/**
  * WebSocket Module
  * Single Responsibility: Handle WebSocket communication with server
  */

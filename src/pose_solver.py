@@ -1,4 +1,4 @@
-"""
+﻿"""
 Pose Solver - Production 6DoF Pose Estimation with Tracking Mode
 
 TRACKING STATE MACHINE:

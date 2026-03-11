@@ -1,8 +1,8 @@
 ﻿(function () {
   const DEFAULT_ALIGNMENT = {
-    position: { x: 0, y: 0, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
-    scale: 1,
+    position: { x: 0.01, y: 0.04, z: 0.13 },
+    rotation: { x: 1.570796, y: 0, z: 0 },
+    scale: 2.04,
   }
 
   const DEFAULT_PROFILE = {
@@ -135,5 +135,6 @@
     buildModelRig,
   }
 })()
+
 
 

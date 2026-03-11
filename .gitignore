@@ -40,3 +40,4 @@ Thumbs.db
 # Web
 node_modules/
 .npm
+smoke-output.json

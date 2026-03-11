@@ -1,0 +1,51 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runtime Smoke</title>
+    <style>
+      body { margin: 0; font: 14px/1.5 Consolas, monospace; background: #07110d; color: #d7f7e2; padding: 20px; }
+      .status { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+      .status[data-state='PASS'] { color: #00d98a; }
+      .status[data-state='FAIL'] { color: #ff7373; }
+      pre { white-space: pre-wrap; background: rgba(255,255,255,0.04); padding: 14px; border-radius: 12px; }
+    </style>
+  </head>
+  <body data-status="RUNNING">
+    <div class="status" id="status" data-state="RUNNING">RUNNING</div>
+    <pre id="output">Booting browser smoke harness...</pre>
+    <script>
+      window.__smokeReport = async function (state, payload) {
+        try {
+          await fetch('/smoke-report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: state, ...(payload || {}) }),
+            keepalive: true,
+          })
+        } catch (error) {
+        }
+      }
+      window.addEventListener('error', function (event) {
+        window.__smokeReport('FAIL', {
+          pass: false,
+          stage: 'window-error',
+          message: event.message,
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+        })
+      })
+      window.addEventListener('unhandledrejection', function (event) {
+        window.__smokeReport('FAIL', {
+          pass: false,
+          stage: 'unhandledrejection',
+          message: event.reason && event.reason.message ? event.reason.message : String(event.reason),
+        })
+      })
+      window.__smokeReport('RUNNING', { phase: 'html-bootstrap' })
+    </script>
+    <script src="/static/js/browser-smoke.js"></script>
+  </body>
+</html>

@@ -38,13 +38,23 @@ $env:WEBAR_PORT = [string]$Port
 
 $server = Start-Process -FilePath $python -ArgumentList 'app.py' -WorkingDirectory $repo -PassThru -WindowStyle Hidden
 $browserProcess = $null
+$contract = $null
 try {
   $ready = $false
   for ($i = 0; $i -lt 40; $i += 1) {
     try {
       $statusResponse = Invoke-WebRequest -Uri ($baseUrl + '/status') -UseBasicParsing
       $statusPayload = $statusResponse.Content | ConvertFrom-Json
-      if ($statusPayload.build_signature -eq 'research-webxr-worker-wasm-map-20260309') {
+      $contractChecks = @(
+        $statusPayload.ready -eq $true,
+        -not [string]::IsNullOrWhiteSpace([string]$statusPayload.build_signature),
+        $statusPayload.tracking_mode -eq 'webxr-camera-access-worker-owned-image-target',
+        $statusPayload.server_tracking -eq $false,
+        $statusPayload.no_fallbacks -eq $true,
+        $statusPayload.smoke_report_endpoint -eq '/smoke-report'
+      )
+      if ($contractChecks -notcontains $false) {
+        $contract = $statusPayload
         $ready = $true
         break
       }
@@ -53,7 +63,7 @@ try {
     Start-Sleep -Milliseconds 350
   }
   if (-not $ready) {
-    throw ('Flask server did not become ready on ' + $baseUrl + ' with the expected build signature.')
+    throw ('Flask server did not expose the expected runtime contract on ' + $baseUrl + '/status.')
   }
 
   Invoke-WebRequest -Uri ($baseUrl + '/smoke-report') -Method Delete -UseBasicParsing | Out-Null
@@ -97,6 +107,7 @@ try {
   }
 
   $result | Add-Member -NotePropertyName baseUrl -NotePropertyValue $baseUrl -Force
+  $result | Add-Member -NotePropertyName contract -NotePropertyValue $contract -Force
   $result | ConvertTo-Json -Depth 8 | Set-Content -Path (Join-Path $repo 'smoke-output.json') -Encoding UTF8
   if ($result.status -ne 'PASS') {
     throw ('Smoke harness reported ' + $result.status)

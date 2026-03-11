@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="webar-build" content="{{ build_signature }}" />
+    <title>Camera Diagnostics</title>
+    <style>
+      :root {
+        --bg-0: #031014;
+        --bg-1: #071d21;
+        --panel: rgba(6, 16, 20, 0.84);
+        --panel-strong: rgba(6, 16, 20, 0.94);
+        --line: rgba(255, 255, 255, 0.08);
+        --line-strong: rgba(255, 255, 255, 0.14);
+        --text: #edf7f4;
+        --muted: #8eadab;
+        --accent: #00d98a;
+        --accent-2: #3aa2ff;
+        --warn: #f5c451;
+        --danger: #ff7c7c;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: "Segoe UI", Roboto, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(0, 217, 138, 0.18), transparent 32%),
+          radial-gradient(circle at top right, rgba(58, 162, 255, 0.14), transparent 28%),
+          linear-gradient(180deg, var(--bg-1) 0%, #020608 58%, #010304 100%);
+      }
+      a { color: inherit; }
+      button, select { font: inherit; }
+      .page {
+        min-height: 100vh;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-weight: 800;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 46px);
+        line-height: 0.96;
+      }
+      .header p {
+        margin: 10px 0 0;
+        max-width: 760px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .header-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .pill-link,
+      .action-btn {
+        border: 1px solid var(--line-strong);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        text-decoration: none;
+        border-radius: 999px;
+        padding: 11px 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .pill-link:hover,
+      .action-btn:hover {
+        border-color: rgba(0, 217, 138, 0.55);
+        background: rgba(0, 217, 138, 0.12);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr);
+        gap: 18px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(18px);
+      }
+      .main-panel {
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .controls {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .select-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 220px;
+      }
+      .select-label,
+      .section-label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      select {
+        min-height: 44px;
+        border-radius: 14px;
+        border: 1px solid var(--line-strong);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        padding: 0 14px;
+      }
+      .notice {
+        border-radius: 18px;
+        padding: 14px 16px;
+        line-height: 1.5;
+        border: 1px solid rgba(245, 196, 81, 0.24);
+        background: rgba(245, 196, 81, 0.08);
+        color: #ffe9a7;
+      }
+      .notice.good {
+        border-color: rgba(0, 217, 138, 0.25);
+        background: rgba(0, 217, 138, 0.08);
+        color: #c6ffd5;
+      }
+      .preview-shell {
+        position: relative;
+        border-radius: 22px;
+        overflow: hidden;
+        background:
+          linear-gradient(135deg, rgba(0, 217, 138, 0.08), rgba(58, 162, 255, 0.08)),
+          rgba(1, 5, 7, 0.86);
+        border: 1px solid var(--line);
+        min-height: 380px;
+      }
+      video,
+      canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      #previewVideo {
+        width: 100%;
+        min-height: 380px;
+        max-height: 70vh;
+        object-fit: cover;
+        background: #010304;
+      }
+      .preview-overlay {
+        position: absolute;
+        inset: auto 16px 16px 16px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        pointer-events: none;
+      }
+      .mini-stat {
+        border-radius: 16px;
+        padding: 12px;
+        background: rgba(1, 7, 9, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(10px);
+      }
+      .mini-stat-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .mini-stat-value {
+        margin-top: 6px;
+        font-size: 22px;
+        font-weight: 800;
+      }
+      .mini-stat-meta {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .grid-two {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+      .metric-card,
+      .capture-card,
+      .side-panel {
+        padding: 18px;
+      }
+      .card-title {
+        margin: 0;
+        font-size: 18px;
+      }
+      .card-sub {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .metric-list {
+        margin-top: 14px;
+        display: grid;
+        gap: 10px;
+      }
+      .metric-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+      .metric-row:last-child {
+        padding-bottom: 0;
+        border-bottom: 0;
+      }
+      .metric-name {
+        color: var(--muted);
+      }
+      .metric-value {
+        font-family: Consolas, Monaco, monospace;
+        font-weight: 700;
+        text-align: right;
+      }
+      .capture-shell {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 12px;
+      }
+      .capture-preview {
+        border-radius: 18px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--line);
+        min-height: 180px;
+      }
+      .capture-preview canvas,
+      .capture-preview img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .capture-meta {
+        padding: 10px 12px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+        border-top: 1px solid var(--line);
+      }
+      .side-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .side-section {
+        border-top: 1px solid var(--line);
+        padding-top: 16px;
+      }
+      .side-section:first-child {
+        border-top: 0;
+        padding-top: 0;
+      }
+      .check-list,
+      .steps-list {
+        margin: 10px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .score-bar {
+        margin-top: 14px;
+        height: 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+      .score-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #ff7c7c 0%, #f5c451 50%, #00d98a 100%);
+        transition: width 0.2s ease;
+      }
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 7px 12px;
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .status-chip.good { color: #b8ffd0; border: 1px solid rgba(0, 217, 138, 0.28); }
+      .status-chip.warn { color: #ffe2a1; border: 1px solid rgba(245, 196, 81, 0.28); }
+      .status-chip.bad { color: #ffcbcb; border: 1px solid rgba(255, 124, 124, 0.28); }
+      .hidden { display: none !important; }
+      @media (max-width: 1080px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 760px) {
+        .page {
+          padding: 16px;
+        }
+        .preview-overlay {
+          grid-template-columns: 1fr;
+        }
+        .grid-two,
+        .capture-shell {
+          grid-template-columns: 1fr;
+        }
+        #previewVideo {
+          min-height: 280px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div>
+          <p class="eyebrow">Camera Isolation</p>
+          <h1>Camera Diagnostics</h1>
+          <p>
+            This page uses plain <code>getUserMedia</code> instead of WebXR so we can check whether the browser camera feed is sharp before immersive AR starts. If this page is sharp but the AR page is soft, the blur is coming from the immersive WebXR passthrough pipeline rather than the tracker UI.
+          </p>
+        </div>
+        <div class="header-actions">
+          <a class="pill-link" href="/">Open AR Page</a>
+          <a class="pill-link" href="/reconstruction-dashboard">Open Sessions</a>
+        </div>
+      </header>
+
+      <div class="layout">
+        <section class="panel main-panel">
+          <div class="controls">
+            <button class="action-btn" id="startBtn" type="button">Start Camera Test</button>
+            <button class="action-btn hidden" id="stopBtn" type="button">Stop</button>
+            <button class="action-btn hidden" id="captureBtn" type="button">Capture Frame</button>
+            <div class="select-wrap">
+              <label class="select-label" for="cameraSelect">Rear Camera</label>
+              <select id="cameraSelect">
+                <option value="">Default environment camera</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="notice" id="statusNotice">
+            Start the camera test, let autofocus settle for a second, then compare this view with the WebXR AR page at the same distance from the printed target.
+          </div>
+
+          <div class="preview-shell">
+            <video id="previewVideo" playsinline muted autoplay></video>
+            <div class="preview-overlay">
+              <div class="mini-stat">
+                <div class="mini-stat-label">Sharpness</div>
+                <div class="mini-stat-value" id="sharpnessValue">-</div>
+                <div class="mini-stat-meta" id="sharpnessMeta">Variance of Laplacian estimate from the live camera frame.</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-stat-label">Stream</div>
+                <div class="mini-stat-value" id="streamValue">Idle</div>
+                <div class="mini-stat-meta" id="streamMeta">No active browser camera stream.</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-stat-label">Interpretation</div>
+                <div class="mini-stat-value" id="qualityValue">-</div>
+                <div class="mini-stat-meta" id="qualityMeta">Start the stream to see whether the browser camera feed itself is soft.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="score-bar" aria-hidden="true">
+            <div class="score-fill" id="scoreFill"></div>
+          </div>
+
+          <div class="grid-two">
+            <article class="panel metric-card">
+              <h2 class="card-title">Live Camera Metrics</h2>
+              <p class="card-sub">
+                These values come from the plain browser camera stream, not from the WebXR target tracker.
+              </p>
+              <div class="metric-list" id="metricList"></div>
+            </article>
+
+            <article class="panel capture-card">
+              <h2 class="card-title">Captured Comparison Frame</h2>
+              <p class="card-sub">
+                Use this to freeze a frame and inspect whether text edges and target corners are genuinely sharp before entering immersive AR.
+              </p>
+              <div class="capture-shell">
+                <div class="capture-preview">
+                  <canvas id="analysisCanvas" width="640" height="480"></canvas>
+                  <div class="capture-meta" id="analysisMeta">
+                    No captured frame yet.
+                  </div>
+                </div>
+                <div class="capture-preview">
+                  <canvas id="edgeCanvas" width="640" height="480"></canvas>
+                  <div class="capture-meta" id="edgeMeta">
+                    Edge contrast preview will appear here after capture.
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <aside class="panel side-panel">
+          <div class="side-section">
+            <p class="eyebrow">Decision</p>
+            <h2 class="card-title">How To Read The Result</h2>
+            <div class="status-chip warn" id="resultChip">Awaiting Camera Test</div>
+            <ol class="steps-list">
+              <li>Test this page first at the same distance and lighting as the printed target.</li>
+              <li>Then open the AR page and repeat the same pose.</li>
+              <li>If this page is sharp but immersive AR is soft, the issue is the browser or device WebXR passthrough path.</li>
+              <li>If both are soft, the issue is browser camera quality, focus distance, lens cleanliness, or lighting.</li>
+            </ol>
+          </div>
+
+          <div class="side-section">
+            <h3 class="card-title">Why This Matters</h3>
+            <ul class="check-list">
+              <li>Image tracking depends on high-frequency detail like printed edges and textured corners.</li>
+              <li>Soft optics reduce feature quality before the tracker even starts matching.</li>
+              <li>A blurry passthrough can make a correct model pose look unstable because the target never solves cleanly.</li>
+            </ul>
+          </div>
+
+          <div class="side-section">
+            <h3 class="card-title">What We Can And Cannot Control</h3>
+            <ul class="check-list">
+              <li>On this page we can request the rear camera and inspect browser-exposed settings.</li>
+              <li>In immersive WebXR we generally cannot force autofocus or focus distance the way we could with a custom media stream.</li>
+              <li>If this page looks sharp, tracker work should focus on pose solving and calibration rather than optics.</li>
+            </ul>
+          </div>
+
+          <div class="side-section">
+            <h3 class="card-title">Known Good Test Setup</h3>
+            <ul class="check-list">
+              <li>Keep the printed target roughly 25 to 40 cm away.</li>
+              <li>Let the target fill about one-third to one-half of the frame.</li>
+              <li>Use bright diffuse light and avoid glossy reflections.</li>
+              <li>Clean the camera lens before comparing pages.</li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script src="/static/js/camera-diagnostics.js?v={{ build_signature }}"></script>
+  </body>
+</html>

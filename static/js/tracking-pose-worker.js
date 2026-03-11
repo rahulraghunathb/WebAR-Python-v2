@@ -1,4 +1,4 @@
-﻿importScripts('/static/js/wasm-pose-kernel.js')
+importScripts('/static/js/wasm-pose-kernel.js')
 
 const DEFAULT_CONFIG = {
   basePosAlpha: 0.18,
@@ -34,6 +34,13 @@ const DEFAULT_CONFIG = {
   minTargetInliers: 6,
   targetInlierPx: 7,
   targetRansacIterations: 56,
+  targetStableFrames: 4,
+  targetStableWindowMs: 260,
+  targetStableMinConfidence: 0.42,
+  targetStableMinInliers: 7,
+  targetStableMaxReprojectionPx: 4.5,
+  targetTrackHoldMs: 900,
+  targetLostHoldMs: 1800,
 }
 
 const state = {
@@ -66,6 +73,8 @@ const state = {
     confidence: 0,
     lastSeenTimestampMs: 0,
     updates: 0,
+    stableFrames: 0,
+    lockSamples: [],
   },
   visual: {
     state: 'IDLE',
@@ -90,18 +99,35 @@ const state = {
     matchCount: 0,
     matchRatio: 0,
     trackConfidence: 0,
+    averageTrackAge: 0,
+    maxTrackAge: 0,
+    longTrackRatio: 0,
     trackCount: 0,
     keyframeCount: 0,
     landmarkCount: 0,
+    stableLandmarkCount: 0,
+    staleLandmarkCount: 0,
+    staleLandmarkRatio: 0,
+    keyframeGrowthPerSec: 0,
+    landmarkGrowthPerSec: 0,
+    motionObservability: 0,
     mapState: 'BOOTSTRAP',
     relocalizationScore: 0,
     relocalizationKeyframeId: -1,
+    relocalizationAttemptCount: 0,
+    relocalizationRecoveryCount: 0,
+    relocalizationStartMs: 0,
+    lastRelocalizationDurationMs: 0,
+    currentRelocalizationDurationMs: 0,
     motionX: 0,
     motionY: 0,
     motionScale: 1,
     motionRotationDeg: 0,
     visualOdometryConfidence: 0,
     lastKeyframeFrame: 0,
+    lastGrowthTimestampMs: 0,
+    lastGrowthKeyframeCount: 0,
+    lastGrowthLandmarkCount: 0,
     keyframes: [],
     landmarks: new Map(),
   },
@@ -592,6 +618,8 @@ function setReferenceImage(payload) {
   state.reference.confidence = 0
   state.reference.lastSeenTimestampMs = 0
   state.reference.updates = 0
+  state.reference.stableFrames = 0
+  state.reference.lockSamples = []
 
   if (!state.initialized) {
     state.visual.state = state.reference.ready ? 'READY' : 'BOOTSTRAP'
@@ -713,6 +741,69 @@ function rotationResidualDeg(source, target) {
 
 function decomposePoseMatrix(matrix) {
   return { position: [matrix[12], matrix[13], matrix[14]], quaternion: quaternionFromMatrix(matrix) }
+}
+
+function quaternionDot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
+}
+
+function averageTargetLockSamples(samples) {
+  if (!samples || !samples.length) {
+    return null
+  }
+
+  let totalWeight = 0
+  const position = [0, 0, 0]
+  let quaternionAccumulator = null
+  let weightedConfidence = 0
+  let weightedReprojection = 0
+  let maxInliers = 0
+
+  for (const sample of samples) {
+    const confidence = clamp01(sample.confidence || 0)
+    const inlierCount = Number(sample.inlierCount || 0)
+    const reprojectionPx = Number(sample.reprojectionPx || 0)
+    const weight = Math.max(0.5, 1 + confidence * 0.8 + inlierCount * 0.14)
+    totalWeight += weight
+    position[0] += sample.position[0] * weight
+    position[1] += sample.position[1] * weight
+    position[2] += sample.position[2] * weight
+
+    let quaternion = sample.quaternion.slice(0, 4)
+    if (!quaternionAccumulator) {
+      quaternionAccumulator = [0, 0, 0, 0]
+    } else if (quaternionDot(quaternionAccumulator, quaternion) < 0) {
+      quaternion = [-quaternion[0], -quaternion[1], -quaternion[2], -quaternion[3]]
+    }
+
+    quaternionAccumulator[0] += quaternion[0] * weight
+    quaternionAccumulator[1] += quaternion[1] * weight
+    quaternionAccumulator[2] += quaternion[2] * weight
+    quaternionAccumulator[3] += quaternion[3] * weight
+    weightedConfidence += confidence * weight
+    weightedReprojection += reprojectionPx * weight
+    maxInliers = Math.max(maxInliers, inlierCount)
+  }
+
+  if (!totalWeight || !quaternionAccumulator) {
+    return null
+  }
+
+  const averagedPosition = [
+    position[0] / totalWeight,
+    position[1] / totalWeight,
+    position[2] / totalWeight,
+  ]
+  const averagedQuaternion = normalizeQuaternion(quaternionAccumulator)
+
+  return {
+    matrix: composeMatrix(averagedPosition, averagedQuaternion),
+    position: averagedPosition,
+    quaternion: averagedQuaternion,
+    confidence: weightedConfidence / totalWeight,
+    inlierCount: maxInliers,
+    reprojectionPx: weightedReprojection / totalWeight,
+  }
 }
 
 function median(values) {
@@ -979,13 +1070,12 @@ function relocalizeAgainstKeyframes(features) {
 }
 
 function updateMapState(features, matches, motionEstimate, timestampMs) {
-  const previousFeatures = state.visual.prevFeatures
-  let trackAgeAccumulator = 0
+  let maxTrackAge = 0
 
   for (const match of matches) {
     match.current.trackId = match.previous.trackId
     match.current.age = Number(match.previous.age || 1) + 1
-    trackAgeAccumulator += match.current.age
+    maxTrackAge = Math.max(maxTrackAge, match.current.age)
   }
 
   for (const feature of features) {
@@ -997,7 +1087,16 @@ function updateMapState(features, matches, motionEstimate, timestampMs) {
     state.visual.nextTrackId += 1
   }
 
+  let trackAgeAccumulator = 0
+  let longTrackCount = 0
   for (const feature of features) {
+    const featureAge = Number(feature.age || 1)
+    trackAgeAccumulator += featureAge
+    maxTrackAge = Math.max(maxTrackAge, featureAge)
+    if (featureAge >= 4) {
+      longTrackCount += 1
+    }
+
     const existing = state.visual.landmarks.get(feature.trackId) || {
       id: feature.trackId,
       observations: 0,
@@ -1012,7 +1111,7 @@ function updateMapState(features, matches, motionEstimate, timestampMs) {
     existing.lastFrame = state.visual.frames
     existing.x = feature.x
     existing.y = feature.y
-    existing.age = Math.max(existing.age, feature.age)
+    existing.age = Math.max(existing.age, featureAge)
     state.visual.landmarks.set(feature.trackId, existing)
   }
 
@@ -1037,12 +1136,16 @@ function updateMapState(features, matches, motionEstimate, timestampMs) {
   }
 
   const relocalization = relocalizeAgainstKeyframes(features)
-  const landmarkCount = Array.from(state.visual.landmarks.values()).filter((landmark) => landmark.observations >= 3).length
+  const landmarkValues = Array.from(state.visual.landmarks.values())
+  const stableLandmarkCount = landmarkValues.filter((landmark) => landmark.observations >= 3).length
+  const staleLandmarkCount = landmarkValues.filter((landmark) => state.visual.frames - Number(landmark.lastFrame || 0) >= 12).length
+  const staleLandmarkRatio = landmarkValues.length ? staleLandmarkCount / landmarkValues.length : 0
   const matchRatio = features.length
-    ? matches.length / Math.max(1, Math.min(features.length, previousFeatures.length || features.length))
+    ? matches.length / Math.max(1, Math.min(features.length, state.visual.prevFeatures.length || features.length))
     : 0
-  const averageTrackAge = matches.length ? trackAgeAccumulator / matches.length : 0
-  const landmarkScore = clamp01(landmarkCount / 36)
+  const averageTrackAge = features.length ? trackAgeAccumulator / features.length : 0
+  const longTrackRatio = features.length ? longTrackCount / features.length : 0
+  const landmarkScore = clamp01(stableLandmarkCount / 36)
   const featureGate = clamp01(features.length / 18)
   const matchGate = clamp01(matches.length / 12)
   const trackConfidence = clamp01(matchRatio * 0.42 + landmarkScore * 0.18 + clamp01(averageTrackAge / 8) * 0.14 + featureGate * 0.14 + matchGate * 0.12)
@@ -1073,54 +1176,86 @@ function updateMapState(features, matches, motionEstimate, timestampMs) {
     trackId: feature.trackId,
     age: feature.age,
   }))
+  state.visual.averageTrackAge = averageTrackAge
+  state.visual.maxTrackAge = maxTrackAge
+  state.visual.longTrackRatio = longTrackRatio
   state.visual.trackCount = features.length
   state.visual.matchCount = matches.length
   state.visual.matchRatio = matchRatio
   state.visual.trackConfidence = trackConfidence
   state.visual.keyframeCount = state.visual.keyframes.length
-  state.visual.landmarkCount = landmarkCount
+  state.visual.landmarkCount = stableLandmarkCount
+  state.visual.stableLandmarkCount = stableLandmarkCount
+  state.visual.staleLandmarkCount = staleLandmarkCount
+  state.visual.staleLandmarkRatio = staleLandmarkRatio
   state.visual.relocalizationScore = relocalizationScore
   state.visual.relocalizationKeyframeId = relocalizationScore > 0 ? relocalization.keyframeId : -1
+
+  const growthDtSec = state.visual.lastGrowthTimestampMs
+    ? Math.max(0.001, (timestampMs - state.visual.lastGrowthTimestampMs) / 1000)
+    : 0
+  state.visual.keyframeGrowthPerSec = growthDtSec
+    ? (state.visual.keyframeCount - state.visual.lastGrowthKeyframeCount) / growthDtSec
+    : 0
+  state.visual.landmarkGrowthPerSec = growthDtSec
+    ? (state.visual.landmarkCount - state.visual.lastGrowthLandmarkCount) / growthDtSec
+    : 0
+  state.visual.lastGrowthTimestampMs = timestampMs
+  state.visual.lastGrowthKeyframeCount = state.visual.keyframeCount
+  state.visual.lastGrowthLandmarkCount = state.visual.landmarkCount
 
   const mappedKeyframes = Number(state.config.minMappedKeyframes || 3)
   const mappedLandmarks = Number(state.config.minMappedLandmarks || 24)
   const mappedMatchRatio = Number(state.config.minMappedMatchRatio || 0.38)
   const mappedTrackConfidence = Number(state.config.minMappedTrackConfidence || 0.42)
+  const previousMapState = state.visual.mapState || 'BOOTSTRAP'
+  let nextMapState = 'BOOTSTRAP'
 
   if (
     state.visual.keyframeCount >= mappedKeyframes &&
-    landmarkCount >= mappedLandmarks &&
+    stableLandmarkCount >= mappedLandmarks &&
     features.length >= 14 &&
     matches.length >= 8 &&
     matchRatio >= mappedMatchRatio &&
     trackConfidence >= mappedTrackConfidence &&
     relocalizationScore >= 0.35
   ) {
-    state.visual.mapState = 'MAPPED'
+    nextMapState = 'MAPPED'
   } else if (
     relocalizationScore >= 0.45 &&
     features.length >= 10 &&
     matches.length >= 5 &&
     trackConfidence >= 0.26
   ) {
-    state.visual.mapState = 'RELOCALIZING'
+    nextMapState = 'RELOCALIZING'
   } else if (
     features.length >= 8 &&
     matches.length >= 4 &&
     trackConfidence >= 0.18
   ) {
-    state.visual.mapState = 'TRACKING'
-  } else {
-    state.visual.mapState = 'BOOTSTRAP'
+    nextMapState = 'TRACKING'
   }
 
-  state.visual.visualOdometryConfidence = clamp01(
-    trackConfidence * 0.52 +
-    relocalizationScore * 0.18 +
-    featureGate * 0.14 +
-    clamp01(1 - state.visual.motion / 0.42) * 0.16
-  )
+   if (nextMapState === 'RELOCALIZING' && previousMapState !== 'RELOCALIZING') {
+    state.visual.relocalizationAttemptCount += 1
+    state.visual.relocalizationStartMs = timestampMs
+  } else if (previousMapState === 'RELOCALIZING' && nextMapState !== 'RELOCALIZING') {
+    if (['TRACKING', 'MAPPED'].includes(nextMapState)) {
+      state.visual.relocalizationRecoveryCount += 1
+      state.visual.lastRelocalizationDurationMs = state.visual.relocalizationStartMs
+        ? Math.max(0, timestampMs - state.visual.relocalizationStartMs)
+        : 0
+    }
+    state.visual.relocalizationStartMs = 0
+  }
+
+  state.visual.currentRelocalizationDurationMs =
+    nextMapState === 'RELOCALIZING' && state.visual.relocalizationStartMs
+      ? Math.max(0, timestampMs - state.visual.relocalizationStartMs)
+      : 0
+  state.visual.mapState = nextMapState
 }
+
 
 function buildConfidence(measurementConfidence, translationResidualM, rotationResidualDegValue, visualQuality, trackConfidence, relocalizationScore) {
   const translationScore = 1 - Math.min(1, translationResidualM / Math.max(0.001, state.config.snapTranslationM))
@@ -1151,6 +1286,8 @@ function resetState() {
   state.reference.confidence = 0
   state.reference.lastSeenTimestampMs = 0
   state.reference.updates = 0
+  state.reference.stableFrames = 0
+  state.reference.lockSamples = []
   state.visual.state = state.reference.ready ? 'READY' : 'BOOTSTRAP'
   state.visual.quality = 0
   state.visual.brightness = 0
@@ -1174,17 +1311,34 @@ function resetState() {
   state.visual.matchRatio = 0
   state.visual.trackConfidence = 0
   state.visual.trackCount = 0
+  state.visual.averageTrackAge = 0
+  state.visual.maxTrackAge = 0
+  state.visual.longTrackRatio = 0
   state.visual.keyframeCount = 0
   state.visual.landmarkCount = 0
+  state.visual.stableLandmarkCount = 0
+  state.visual.staleLandmarkCount = 0
+  state.visual.staleLandmarkRatio = 0
+  state.visual.keyframeGrowthPerSec = 0
+  state.visual.landmarkGrowthPerSec = 0
+  state.visual.motionObservability = 0
   state.visual.mapState = 'BOOTSTRAP'
   state.visual.relocalizationScore = 0
   state.visual.relocalizationKeyframeId = -1
+  state.visual.relocalizationAttemptCount = 0
+  state.visual.relocalizationRecoveryCount = 0
+  state.visual.relocalizationStartMs = 0
+  state.visual.lastRelocalizationDurationMs = 0
+  state.visual.currentRelocalizationDurationMs = 0
   state.visual.motionX = 0
   state.visual.motionY = 0
   state.visual.motionScale = 1
   state.visual.motionRotationDeg = 0
   state.visual.visualOdometryConfidence = 0
   state.visual.lastKeyframeFrame = 0
+  state.visual.lastGrowthTimestampMs = 0
+  state.visual.lastGrowthKeyframeCount = 0
+  state.visual.lastGrowthLandmarkCount = 0
   state.visual.keyframes = []
   state.visual.landmarks = new Map()
 }
@@ -1397,8 +1551,18 @@ function analyzeVisualFrame(payload) {
     state.visual.relocalizationScore * 0.1
   ) * lowFeaturePenalty)
 
+  const motionExcitation = clamp01(state.visual.motion / 0.12) * clamp01(1 - Math.max(0, state.visual.motion - 0.38) / 0.42)
+  const motionObservability = clamp01(
+    featureScore * 0.32 +
+    contrastScore * 0.2 +
+    state.visual.matchRatio * 0.16 +
+    state.visual.trackConfidence * 0.16 +
+    motionExcitation * 0.16
+  )
+
   state.visual.state = state.visual.mapState
   state.visual.quality = quality
+  state.visual.motionObservability = motionObservability
   state.visual.brightness = meanBrightness / 255
   state.visual.contrast = contrastScore
   state.visual.featureCount = features.length
@@ -1430,30 +1594,105 @@ function analyzeVisualFrame(payload) {
   state.reference.inlierCount = targetEstimate ? targetEstimate.inlierCount : 0
   state.reference.reprojectionPx = targetEstimate ? Number(targetEstimate.reprojectionPx.toFixed(3)) : 0
   state.reference.confidence = targetEstimate ? Number(targetEstimate.confidence.toFixed(3)) : 0
+  const frameTimestampMs = Number(payload.timestampMs || nowMs())
+  const trackHoldMs = Math.max(0, Number(state.config.targetTrackHoldMs || 420))
+  const lostHoldMs = Math.max(trackHoldMs, Number(state.config.targetLostHoldMs || 1200))
+  const stableWindowMs = Math.max(120, Number(state.config.targetStableWindowMs || 260))
+  const stableFramesRequired = Math.max(3, Number(state.config.targetStableFrames || 4))
+  const stableMinConfidence = clamp01(Number(state.config.targetStableMinConfidence || 0.42))
+  const stableMinInliers = Math.max(4, Number(state.config.targetStableMinInliers || state.config.minTargetInliers || 6))
+  const stableMaxReprojectionPx = Math.max(1.5, Number(state.config.targetStableMaxReprojectionPx || 4.5))
+  const detectedMatchFloor = Math.max(3, Number(state.config.minTargetMatches || 8) - 3)
+  state.reference.lockSamples = state.reference.lockSamples.filter((sample) => frameTimestampMs - sample.timestampMs <= stableWindowMs)
+
   if (targetEstimate) {
-    state.reference.state = 'TRACKING'
-    state.reference.lastSeenTimestampMs = Number(payload.timestampMs || nowMs())
-    state.reference.updates += 1
-    processMeasurement({
-      id: 'target-' + state.visual.frames,
-      source: 'image-target',
-      matrix: targetEstimate.worldMatrix,
-      confidence: targetEstimate.confidence,
-      forceSnap: !state.initialized,
-      hasPlacement: true,
-      timestampMs: Number(payload.timestampMs || nowMs()),
-      sentAtMs: Number(payload.sentAtMs || startedAt),
-    })
+    const estimatePose = decomposePoseMatrix(targetEstimate.worldMatrix)
+    const stableEligible =
+      targetEstimate.confidence >= stableMinConfidence &&
+      targetEstimate.inlierCount >= stableMinInliers &&
+      targetEstimate.reprojectionPx <= stableMaxReprojectionPx
+
+    if (stableEligible) {
+      state.reference.lockSamples.push({
+        timestampMs: frameTimestampMs,
+        position: estimatePose.position,
+        quaternion: estimatePose.quaternion,
+        confidence: targetEstimate.confidence,
+        inlierCount: targetEstimate.inlierCount,
+        reprojectionPx: targetEstimate.reprojectionPx,
+      })
+      state.reference.lockSamples = state.reference.lockSamples.filter((sample) => frameTimestampMs - sample.timestampMs <= stableWindowMs)
+    } else if (!state.initialized) {
+      state.reference.lockSamples = []
+    }
+
+    state.reference.stableFrames = state.reference.lockSamples.length
+    const averagedTargetEstimate = averageTargetLockSamples(state.reference.lockSamples)
+    const canCommitInitialLock =
+      !state.initialized && Boolean(averagedTargetEstimate) && state.reference.stableFrames >= stableFramesRequired
+    const canRefreshTrackedPose =
+      state.initialized && Boolean(averagedTargetEstimate) && (
+        stableEligible || state.reference.stableFrames >= Math.max(2, stableFramesRequired - 1)
+      )
+
+    if (canCommitInitialLock || canRefreshTrackedPose) {
+      const resolvedEstimate = averagedTargetEstimate || {
+        matrix: targetEstimate.worldMatrix,
+        confidence: targetEstimate.confidence,
+      }
+      state.reference.state = 'TRACKING'
+      state.reference.lastSeenTimestampMs = frameTimestampMs
+      state.reference.confidence = Number(Math.max(targetEstimate.confidence, resolvedEstimate.confidence || 0).toFixed(3))
+      state.reference.updates += 1
+      processMeasurement({
+        id: 'target-' + state.visual.frames,
+        source: 'image-target',
+        matrix: resolvedEstimate.matrix,
+        confidence: state.reference.confidence,
+        forceSnap: canCommitInitialLock || !state.initialized,
+        hasPlacement: true,
+        timestampMs: frameTimestampMs,
+        sentAtMs: Number(payload.sentAtMs || startedAt),
+      })
+    } else {
+      state.reference.state = 'DETECTED'
+      state.reference.confidence = Number(Math.max(targetEstimate.confidence, 0).toFixed(3))
+    }
   } else if (!state.reference.ready) {
     state.reference.state = 'UNINITIALIZED'
+    state.reference.stableFrames = 0
+    state.reference.lockSamples = []
+  } else if (
+    state.reference.lastSeenTimestampMs &&
+    frameTimestampMs - state.reference.lastSeenTimestampMs < trackHoldMs &&
+    referenceMatches.length >= detectedMatchFloor
+  ) {
+    state.reference.state = 'TRACKING'
+    state.reference.confidence = Number(clamp01(
+      0.24 +
+      clamp01(referenceMatches.length / Math.max(1, Number(state.config.minTargetMatches || 8))) * 0.26 +
+      clamp01(quality) * 0.2 +
+      clamp01(state.visual.trackConfidence) * 0.16
+    ).toFixed(3))
   } else if (referenceMatches.length >= Math.max(4, Number(state.config.minTargetMatches || 8) - 2)) {
     state.reference.state = 'DETECTED'
-  } else if (state.reference.lastSeenTimestampMs && Number(payload.timestampMs || nowMs()) - state.reference.lastSeenTimestampMs < 1200) {
+    if (!state.initialized) {
+      state.reference.stableFrames = 0
+      state.reference.lockSamples = []
+    }
+  } else if (state.reference.lastSeenTimestampMs && frameTimestampMs - state.reference.lastSeenTimestampMs < lostHoldMs) {
     state.reference.state = 'LOST'
+    if (!state.initialized) {
+      state.reference.stableFrames = 0
+      state.reference.lockSamples = []
+    }
   } else {
     state.reference.state = 'SEARCHING'
+    if (!state.initialized) {
+      state.reference.stableFrames = 0
+      state.reference.lockSamples = []
+    }
   }
-
   post('visual-update', {
     state: state.visual.state,
     quality: Number(state.visual.quality.toFixed(3)),
@@ -1463,14 +1702,27 @@ function analyzeVisualFrame(payload) {
     featureCount: state.visual.featureCount,
     featureDensity: Number(state.visual.featureDensity.toFixed(4)),
     trackCount: state.visual.trackCount,
+    averageTrackAge: Number(state.visual.averageTrackAge.toFixed(3)),
+    maxTrackAge: Number(state.visual.maxTrackAge.toFixed(3)),
+    longTrackRatio: Number(state.visual.longTrackRatio.toFixed(3)),
     matchCount: state.visual.matchCount,
     matchRatio: Number(state.visual.matchRatio.toFixed(3)),
     trackConfidence: Number(state.visual.trackConfidence.toFixed(3)),
     keyframeCount: state.visual.keyframeCount,
     landmarkCount: state.visual.landmarkCount,
+    stableLandmarkCount: state.visual.stableLandmarkCount,
+    staleLandmarkCount: state.visual.staleLandmarkCount,
+    staleLandmarkRatio: Number(state.visual.staleLandmarkRatio.toFixed(3)),
+    keyframeGrowthPerSec: Number(state.visual.keyframeGrowthPerSec.toFixed(3)),
+    landmarkGrowthPerSec: Number(state.visual.landmarkGrowthPerSec.toFixed(3)),
+    motionObservability: Number(state.visual.motionObservability.toFixed(3)),
     mapState: state.visual.mapState,
     relocalizationScore: Number(state.visual.relocalizationScore.toFixed(3)),
     relocalizationKeyframeId: state.visual.relocalizationKeyframeId,
+    relocalizationAttemptCount: state.visual.relocalizationAttemptCount,
+    relocalizationRecoveryCount: state.visual.relocalizationRecoveryCount,
+    lastRelocalizationDurationMs: Number(state.visual.lastRelocalizationDurationMs.toFixed(2)),
+    currentRelocalizationDurationMs: Number(state.visual.currentRelocalizationDurationMs.toFixed(2)),
     motionX: Number(state.visual.motionX.toFixed(3)),
     motionY: Number(state.visual.motionY.toFixed(3)),
     motionScale: Number(state.visual.motionScale.toFixed(4)),
@@ -1480,6 +1732,7 @@ function analyzeVisualFrame(payload) {
     targetVisible: state.reference.state === 'TRACKING',
     targetMatchCount: state.reference.matchCount,
     targetInlierCount: state.reference.inlierCount,
+    targetInlierRatio: Number((state.reference.matchCount ? state.reference.inlierCount / state.reference.matchCount : 0).toFixed(3)),
     targetConfidence: Number(state.reference.confidence.toFixed(3)),
     targetReprojectionPx: Number(state.reference.reprojectionPx.toFixed(3)),
     targetUpdates: state.reference.updates,

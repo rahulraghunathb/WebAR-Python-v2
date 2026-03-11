@@ -116,6 +116,8 @@ flowchart TD
     A --> J["Poll /smoke-report until PASS or FAIL"]
 ```
 
+The current browser smoke path is stronger than a pure startup test because it feeds synthetic frames and a measurement into the worker and asserts feature extraction, matching, keyframe creation, relocalization output, and pose emission. But it is still a deterministic worker sanity check, not a full runtime-correctness harness for immersive AR behavior.
+
 ## Component Responsibilities
 
 ### `app.py`
@@ -185,6 +187,58 @@ flowchart TD
     H --> L["periodic perf snapshot"]
 ```
 
+The current telemetry surface is broad, but it is still primarily subsystem-oriented. It answers whether modules are alive, not yet the deeper estimator questions needed for research iteration.
+
+## Research Telemetry Model
+
+For the roadmap toward a metric estimator, telemetry should be grouped around research questions rather than UI subsystems.
+
+### Input Quality
+- frame sharpness and contrast trends
+- feature density and spatial coverage
+- motion observability indicators
+- camera backpressure and dropped-frame rate
+
+### Tracking Quality
+- reprojection error trend
+- inlier ratio and absolute inlier count
+- feature track lifetime distribution
+- pose residuals and filter innovation magnitude
+- pose drift against the native WebXR baseline
+
+### Map Health
+- keyframe growth rate over time
+- stable landmark growth rate over time
+- stale landmark ratio
+- track-to-landmark promotion ratio
+- map-support confidence and keyframe reuse ratio
+
+### Relocalization Behavior
+- time-to-relocalize
+- relocalization attempt count per minute
+- relocalization precision and recall proxies
+- relocalization false-positive rate
+- confidence before and after relocalization transitions
+
+### Latency Budget
+- camera ingest time
+- worker queue time
+- worker compute time
+- render-to-display time
+- end-to-end pose age at render
+
+### Native Baseline Comparison
+- translation delta vs native WebXR pose
+- rotation delta vs native WebXR pose
+- drift accumulation over path length
+- disagreement rate during relocalization windows
+
+Research-grade telemetry should make it possible to answer:
+- what input conditions predict tracking failure
+- whether the estimator is improving or only appearing stable through filtering
+- whether map growth is healthy or simply accumulating stale state
+- whether relocalization recovers true pose or creates plausible but wrong locks
+
 ## Current System Boundary
 
 The current system provides:
@@ -194,14 +248,43 @@ The current system provides:
 - repo-owned WASM vision kernels
 - vendored runtime assets
 - explicit architecture contract and browser smoke validation
+- deterministic worker sanity checks with synthetic browser-driven inputs
 - no fallback tracking modes
 
 The current system does not yet provide:
+- estimator-oriented telemetry sufficient for drift, observability, and relocalization-quality research
 - repo-owned visual-inertial odometry replacing native WebXR world tracking
 - persistent 3D map optimization and loop closure
 - IMU fusion into the estimator
 - cross-session map reuse or cloud localization
+- immersive-session correctness testing under real camera-access and timing pressure
 - VPS, semantic understanding, depth mesh, or occlusion reconstruction
+
+## Validation Roadmap
+
+The validation stack should be layered rather than treated as one smoke pass.
+
+### Contract Tests
+- verify `/status` matches the actual enabled code paths and runtime flags
+- assert required capabilities and no-fallback promises are internally consistent
+
+### Deterministic Worker Tests
+- feed recorded or synthetic frame sequences and measurements into the worker offscreen
+- assert feature counts, match counts, keyframe creation rules, relocalization score trends, and filter output bounds
+
+### Timing and Pressure Tests
+- simulate queue pressure and confirm that the system drops frames instead of allowing latency to grow without bound
+- verify camera capture cadence, worker latency, and pose age remain inside explicit envelopes
+
+### Session-State Tests
+- exercise session start, sparse-feature mode, relocalization entry and exit, reset, and camera-loss scenarios
+- assert state-transition ordering instead of only checking that messages are emitted
+
+### Immersive Runtime Tests
+- validate capability negotiation, camera-access behavior, and session behavior inside `immersive-ar`
+- compare worker pose behavior against native WebXR baseline during controlled motion sequences
+
+The current smoke harness remains useful as a boot and worker-sanity test, but correctness for the research roadmap requires the full ladder above.
 
 ## Research Direction
 

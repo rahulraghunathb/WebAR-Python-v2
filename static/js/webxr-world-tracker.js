@@ -1,4 +1,4 @@
-﻿class WebXRWorldTracker {
+class WebXRWorldTracker {
   constructor(options = {}) {
     this.modelRenderer = options.modelRenderer || null
     this.cameraPipeline = options.cameraPipeline || null
@@ -42,6 +42,7 @@
       targetIndex: -1,
       targetMatchCount: 0,
       targetInlierCount: 0,
+      targetInlierRatio: 0,
       targetConfidence: 0,
       targetReprojectionPx: 0,
       targetReferenceReady: false,
@@ -72,6 +73,8 @@
       workerLatencyMs: 0,
       residualTranslationM: 0,
       residualRotationDeg: 0,
+      measurementDeltaTranslationM: 0,
+      measurementDeltaRotationDeg: 0,
       posAlpha: 0,
       rotAlpha: 0,
       snapCount: 0,
@@ -92,11 +95,24 @@
       matchCount: 0,
       matchRatio: 0,
       trackConfidence: 0,
+      averageTrackAge: 0,
+      maxTrackAge: 0,
+      longTrackRatio: 0,
       keyframeCount: 0,
       landmarkCount: 0,
+      stableLandmarkCount: 0,
+      staleLandmarkCount: 0,
+      staleLandmarkRatio: 0,
+      keyframeGrowthPerSec: 0,
+      landmarkGrowthPerSec: 0,
+      motionObservability: 0,
       mapState: 'BOOTSTRAP',
       relocalizationScore: 0,
       relocalizationKeyframeId: -1,
+      relocalizationAttemptCount: 0,
+      relocalizationRecoveryCount: 0,
+      lastRelocalizationDurationMs: 0,
+      currentRelocalizationDurationMs: 0,
       motionVectorX: 0,
       motionVectorY: 0,
       motionScale: 1,
@@ -357,7 +373,7 @@
     }
 
     const bitmap = this.targetImageBitmap || (await this.loadTargetReferenceImage())
-    const maxDimension = 192
+    const maxDimension = 320
     const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
     const width = Math.max(24, Math.round(bitmap.width * scale))
     const height = Math.max(24, Math.round(bitmap.height * scale))
@@ -472,11 +488,19 @@
     this.poseWorker.postMessage({
       type: 'init',
       config: {
-        referenceMaxDimension: 192,
+        referenceMaxDimension: 320,
+        targetSearchFeatures: 96,
+        targetDescriptorThreshold: 0.48,
+        targetRatioThreshold: 0.82,
         minTargetMatches: 8,
-        minTargetInliers: 6,
+        minTargetInliers: 5,
         targetInlierPx: 7,
-        targetRansacIterations: 56,
+        targetRansacIterations: 120,
+        targetStableFrames: 3,
+        targetStableWindowMs: 260,
+        targetStableMinConfidence: 0.32,
+        targetStableMinInliers: 5,
+        targetStableMaxReprojectionPx: 6,
       },
     })
 
@@ -576,6 +600,8 @@
       this.metrics.workerLatencyMs = Number(payload.workerLatencyMs || 0)
       this.metrics.residualTranslationM = Number(payload.translationResidualM || 0)
       this.metrics.residualRotationDeg = Number(payload.rotationResidualDeg || 0)
+      this.metrics.measurementDeltaTranslationM = this.metrics.residualTranslationM
+      this.metrics.measurementDeltaRotationDeg = this.metrics.residualRotationDeg
       this.metrics.posAlpha = Number(payload.posAlpha || 0)
       this.metrics.rotAlpha = Number(payload.rotAlpha || 0)
       this.metrics.snapCount = Number(payload.snapCount || 0)
@@ -635,14 +661,27 @@
       this.metrics.visualFeatureCount = Number(payload.featureCount || 0)
       this.metrics.visualFeatureDensity = Number(payload.featureDensity || 0)
       this.metrics.trackCount = Number(payload.trackCount || 0)
+      this.metrics.averageTrackAge = Number(payload.averageTrackAge || 0)
+      this.metrics.maxTrackAge = Number(payload.maxTrackAge || 0)
+      this.metrics.longTrackRatio = Number(payload.longTrackRatio || 0)
       this.metrics.matchCount = Number(payload.matchCount || 0)
       this.metrics.matchRatio = Number(payload.matchRatio || 0)
       this.metrics.trackConfidence = Number(payload.trackConfidence || 0)
       this.metrics.keyframeCount = Number(payload.keyframeCount || 0)
       this.metrics.landmarkCount = Number(payload.landmarkCount || 0)
+      this.metrics.stableLandmarkCount = Number(payload.stableLandmarkCount || 0)
+      this.metrics.staleLandmarkCount = Number(payload.staleLandmarkCount || 0)
+      this.metrics.staleLandmarkRatio = Number(payload.staleLandmarkRatio || 0)
+      this.metrics.keyframeGrowthPerSec = Number(payload.keyframeGrowthPerSec || 0)
+      this.metrics.landmarkGrowthPerSec = Number(payload.landmarkGrowthPerSec || 0)
+      this.metrics.motionObservability = Number(payload.motionObservability || 0)
       this.metrics.mapState = payload.mapState || this.metrics.mapState
       this.metrics.relocalizationScore = Number(payload.relocalizationScore || 0)
       this.metrics.relocalizationKeyframeId = Number(payload.relocalizationKeyframeId || -1)
+      this.metrics.relocalizationAttemptCount = Number(payload.relocalizationAttemptCount || 0)
+      this.metrics.relocalizationRecoveryCount = Number(payload.relocalizationRecoveryCount || 0)
+      this.metrics.lastRelocalizationDurationMs = Number(payload.lastRelocalizationDurationMs || 0)
+      this.metrics.currentRelocalizationDurationMs = Number(payload.currentRelocalizationDurationMs || 0)
       this.metrics.motionVectorX = Number(payload.motionX || 0)
       this.metrics.motionVectorY = Number(payload.motionY || 0)
       this.metrics.motionScale = Number(payload.motionScale || 1)
@@ -653,6 +692,7 @@
       this.metrics.visualProcMs = Number(payload.procMs || 0)
       this.metrics.targetMatchCount = Number(payload.targetMatchCount || 0)
       this.metrics.targetInlierCount = Number(payload.targetInlierCount || 0)
+      this.metrics.targetInlierRatio = Number(payload.targetInlierRatio || 0)
       this.metrics.targetConfidence = Number(payload.targetConfidence || 0)
       this.metrics.targetReprojectionPx = Number(payload.targetReprojectionPx || 0)
       this.metrics.targetUpdates = Number(payload.targetUpdates || 0)
@@ -822,7 +862,7 @@
       this.metrics.hitTestState = 'DISABLED'
       this.metrics.anchorState = 'IMAGE_TARGET'
       this.metrics.referenceSpace = 'NEGOTIATING'
-      this.metrics.framebufferScale = 1.15
+      this.metrics.framebufferScale = 1
       this.emitState()
 
       startedSession = await navigator.xr.requestSession('immersive-ar', {
@@ -837,9 +877,9 @@
 
       this.renderer.xr.enabled = true
       if (this.renderer.xr && typeof this.renderer.xr.setReferenceSpaceType === 'function') {
-        this.renderer.xr.setReferenceSpaceType('viewer')
-        this.metrics.referenceSpace = 'viewer-bootstrap'
-        this.log('Configured Three XR reference space type', { type: 'viewer' })
+        this.renderer.xr.setReferenceSpaceType('local')
+        this.metrics.referenceSpace = 'local-bootstrap'
+        this.log('Configured Three XR reference space type', { type: 'local' })
       }
       if (typeof this.renderer.xr.setFramebufferScaleFactor === 'function') {
         this.renderer.xr.setFramebufferScaleFactor(this.metrics.framebufferScale)

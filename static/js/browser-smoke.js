@@ -99,17 +99,17 @@
     const worker = new Worker('/static/js/tracking-pose-worker.js')
     const events = []
 
-    function waitFor(predicate, timeoutMs, label) {
+    function waitFor(predicate, timeoutMs, label, startIndex = 0) {
       return new Promise((resolve, reject) => {
         const startedAt = performance.now()
         const timer = setInterval(() => {
-          const workerFailure = events.find((message) => message.type === 'error')
+          const workerFailure = events.slice(startIndex).find((message) => message.type === 'error')
           if (workerFailure) {
             clearInterval(timer)
             reject(new Error('Worker error during ' + label + ': ' + JSON.stringify(workerFailure.payload || {})))
             return
           }
-          const match = events.find(predicate)
+          const match = events.slice(startIndex).find(predicate)
           if (match) {
             clearInterval(timer)
             resolve(match)
@@ -155,6 +155,19 @@
     postMeasurement(worker, 1200)
     const pose = await waitFor((message) => message.type === 'pose-update', 4000, 'pose-update')
 
+    const resetStartIndex = events.length
+    worker.postMessage({ type: 'reset' })
+    const reset = await waitFor((message) => message.type === 'reset-complete', 4000, 'reset-complete', resetStartIndex)
+
+    const postResetStartIndex = events.length
+    postVisualFrame(worker, 80, 60, 0, 0, 1400)
+    const visualAfterReset = await waitFor(
+      (message) => message.type === 'visual-update' && Number(message.payload.frames || 0) === 1,
+      4000,
+      'visual-frame-after-reset',
+      postResetStartIndex
+    )
+
     worker.terminate()
 
     const assertions = {
@@ -166,6 +179,15 @@
       map: ['TRACKING', 'MAPPED', 'RELOCALIZING'].includes(String(visual2.payload.mapState || '')),
       relocalization: Number(visual2.payload.relocalizationScore || 0) >= 0,
       pose: Number(pose.payload.confidence || 0) > 0,
+      trackAge: Number(visual2.payload.averageTrackAge || 0) > 1,
+      observability: Number(visual2.payload.motionObservability || 0) > 0,
+      staleRatioBounded:
+        Number(visual2.payload.staleLandmarkRatio || 0) >= 0 &&
+        Number(visual2.payload.staleLandmarkRatio || 0) <= 1,
+      growthFinite: Number.isFinite(Number(visual2.payload.keyframeGrowthPerSec || 0)),
+      resetReady: String(reset.payload.workerState || '') === 'READY',
+      resetFramesRestart: Number(visualAfterReset.payload.frames || 0) === 1,
+      resetTrackAgeCleared: Number(visualAfterReset.payload.averageTrackAge || 0) <= 1.05,
     }
 
     const result = {
@@ -175,6 +197,8 @@
       visual1: visual1.payload,
       visual2: visual2.payload,
       pose: pose.payload,
+      reset: reset.payload,
+      visualAfterReset: visualAfterReset.payload,
     }
 
     await setStatus(result.pass ? 'PASS' : 'FAIL', result)

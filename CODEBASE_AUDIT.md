@@ -140,13 +140,13 @@ Latest passing evidence from `smoke-output.json` before cleanup:
 ### Architecture Contract
 
 `/status` now returns:
-- `build_signature: research-webxr-worker-wasm-map-20260309`
-- `tracking_mode: webxr-world-tracking-worker-wasm-camera-access`
+- `build_signature: research-webxr-worker-wasm-owned-target-20260311d`
+- `tracking_mode: webxr-camera-access-worker-owned-image-target`
 - `server_tracking: false`
 - `no_fallbacks: true`
 - `asset_mode: repo-vendored-threejs`
-- `feature_count: 18`
-- `required_capability_count: 6`
+- `feature_count: 19`
+- `required_capability_count: 7`
 
 ### Validation Flow
 

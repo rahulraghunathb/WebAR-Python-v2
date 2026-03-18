@@ -94,6 +94,10 @@
     })
   }
 
+  function countLoggedEvents() {
+    return outputEl.textContent.split('event').length - 1
+  }
+
   async function run() {
     await setStatus('RUNNING', { phase: 'worker-bootstrap' })
     const worker = new Worker('/static/js/tracking-pose-worker.js')
@@ -143,68 +147,70 @@
       log('event', { type: message.type, payload: message.payload })
     }
 
-    worker.postMessage({ type: 'init', config: { featureCellSize: 16, featuresPerCell: 2 } })
-    const ready = await waitFor((message) => message.type === 'ready', 4000, 'worker-ready')
+    try {
+      worker.postMessage({ type: 'init', config: { featureCellSize: 16, featuresPerCell: 2 } })
+      const ready = await waitFor((message) => message.type === 'ready', 4000, 'worker-ready')
 
-    postVisualFrame(worker, 80, 60, 0, 0, 1000)
-    const visual1 = await waitFor((message) => message.type === 'visual-update' && message.payload.frames >= 1, 4000, 'visual-frame-1')
+      postVisualFrame(worker, 80, 60, 0, 0, 1000)
+      const visual1 = await waitFor((message) => message.type === 'visual-update' && message.payload.frames >= 1, 4000, 'visual-frame-1')
 
-    postVisualFrame(worker, 80, 60, 2, 1, 1120)
-    const visual2 = await waitFor((message) => message.type === 'visual-update' && message.payload.frames >= 2, 4000, 'visual-frame-2')
+      postVisualFrame(worker, 80, 60, 2, 1, 1120)
+      const visual2 = await waitFor((message) => message.type === 'visual-update' && message.payload.frames >= 2, 4000, 'visual-frame-2')
 
-    postMeasurement(worker, 1200)
-    const pose = await waitFor((message) => message.type === 'pose-update', 4000, 'pose-update')
+      postMeasurement(worker, 1200)
+      const pose = await waitFor((message) => message.type === 'pose-update', 4000, 'pose-update')
 
-    const resetStartIndex = events.length
-    worker.postMessage({ type: 'reset' })
-    const reset = await waitFor((message) => message.type === 'reset-complete', 4000, 'reset-complete', resetStartIndex)
+      const resetStartIndex = events.length
+      worker.postMessage({ type: 'reset' })
+      const reset = await waitFor((message) => message.type === 'reset-complete', 4000, 'reset-complete', resetStartIndex)
 
-    const postResetStartIndex = events.length
-    postVisualFrame(worker, 80, 60, 0, 0, 1400)
-    const visualAfterReset = await waitFor(
-      (message) => message.type === 'visual-update' && Number(message.payload.frames || 0) === 1,
-      4000,
-      'visual-frame-after-reset',
-      postResetStartIndex
-    )
+      const postResetStartIndex = events.length
+      postVisualFrame(worker, 80, 60, 0, 0, 1400)
+      const visualAfterReset = await waitFor(
+        (message) => message.type === 'visual-update' && Number(message.payload.frames || 0) === 1,
+        4000,
+        'visual-frame-after-reset',
+        postResetStartIndex
+      )
 
-    worker.terminate()
+      const assertions = {
+        ready: Array.isArray(ready.payload.kernels) && ready.payload.kernels.includes('cornerScore8'),
+        features: Number(visual2.payload.featureCount || 0) >= 10,
+        tracks: Number(visual2.payload.trackCount || 0) >= 10,
+        matches: Number(visual2.payload.matchCount || 0) >= 4,
+        keyframes: Number(visual2.payload.keyframeCount || 0) >= 1,
+        map: ['TRACKING', 'MAPPED', 'RELOCALIZING'].includes(String(visual2.payload.mapState || '')),
+        relocalization: Number(visual2.payload.relocalizationScore || 0) >= 0,
+        pose: Number(pose.payload.confidence || 0) > 0,
+        trackAge: Number(visual2.payload.averageTrackAge || 0) > 1,
+        observability: Number(visual2.payload.motionObservability || 0) > 0,
+        staleRatioBounded:
+          Number(visual2.payload.staleLandmarkRatio || 0) >= 0 &&
+          Number(visual2.payload.staleLandmarkRatio || 0) <= 1,
+        growthFinite: Number.isFinite(Number(visual2.payload.keyframeGrowthPerSec || 0)),
+        resetReady: String(reset.payload.workerState || '') === 'READY',
+        resetFramesRestart: Number(visualAfterReset.payload.frames || 0) === 1,
+        resetTrackAgeCleared: Number(visualAfterReset.payload.averageTrackAge || 0) <= 1.05,
+      }
 
-    const assertions = {
-      ready: Array.isArray(ready.payload.kernels) && ready.payload.kernels.includes('cornerScore8'),
-      features: Number(visual2.payload.featureCount || 0) >= 10,
-      tracks: Number(visual2.payload.trackCount || 0) >= 10,
-      matches: Number(visual2.payload.matchCount || 0) >= 4,
-      keyframes: Number(visual2.payload.keyframeCount || 0) >= 1,
-      map: ['TRACKING', 'MAPPED', 'RELOCALIZING'].includes(String(visual2.payload.mapState || '')),
-      relocalization: Number(visual2.payload.relocalizationScore || 0) >= 0,
-      pose: Number(pose.payload.confidence || 0) > 0,
-      trackAge: Number(visual2.payload.averageTrackAge || 0) > 1,
-      observability: Number(visual2.payload.motionObservability || 0) > 0,
-      staleRatioBounded:
-        Number(visual2.payload.staleLandmarkRatio || 0) >= 0 &&
-        Number(visual2.payload.staleLandmarkRatio || 0) <= 1,
-      growthFinite: Number.isFinite(Number(visual2.payload.keyframeGrowthPerSec || 0)),
-      resetReady: String(reset.payload.workerState || '') === 'READY',
-      resetFramesRestart: Number(visualAfterReset.payload.frames || 0) === 1,
-      resetTrackAgeCleared: Number(visualAfterReset.payload.averageTrackAge || 0) <= 1.05,
+      const result = {
+        pass: Object.values(assertions).every(Boolean),
+        assertions,
+        ready: ready.payload,
+        visual1: visual1.payload,
+        visual2: visual2.payload,
+        pose: pose.payload,
+        reset: reset.payload,
+        visualAfterReset: visualAfterReset.payload,
+      }
+
+      await setStatus(result.pass ? 'PASS' : 'FAIL', result)
+    } finally {
+      worker.terminate()
     }
-
-    const result = {
-      pass: Object.values(assertions).every(Boolean),
-      assertions,
-      ready: ready.payload,
-      visual1: visual1.payload,
-      visual2: visual2.payload,
-      pose: pose.payload,
-      reset: reset.payload,
-      visualAfterReset: visualAfterReset.payload,
-    }
-
-    await setStatus(result.pass ? 'PASS' : 'FAIL', result)
   }
 
   run().catch(async (error) => {
-    await setStatus('FAIL', { pass: false, error: error.message || String(error), eventCount: document.getElementById('output').textContent.split('event').length - 1 })
+    await setStatus('FAIL', { pass: false, error: error.message || String(error), eventCount: countLoggedEvents() })
   })
 })()

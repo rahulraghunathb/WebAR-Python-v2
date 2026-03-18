@@ -26,6 +26,18 @@ function Get-FreeTcpPort {
   }
 }
 
+function Test-StatusContract($statusPayload) {
+  $contractChecks = @(
+    $statusPayload.ready -eq $true,
+    -not [string]::IsNullOrWhiteSpace([string]$statusPayload.build_signature),
+    $statusPayload.tracking_mode -eq 'webxr-camera-access-worker-owned-image-target',
+    $statusPayload.server_tracking -eq $false,
+    $statusPayload.no_fallbacks -eq $true,
+    $statusPayload.smoke_report_endpoint -eq '/smoke-report'
+  )
+  return $contractChecks -notcontains $false
+}
+
 if ($Port -le 0) {
   $Port = Get-FreeTcpPort
 }
@@ -45,15 +57,7 @@ try {
     try {
       $statusResponse = Invoke-WebRequest -Uri ($baseUrl + '/status') -UseBasicParsing
       $statusPayload = $statusResponse.Content | ConvertFrom-Json
-      $contractChecks = @(
-        $statusPayload.ready -eq $true,
-        -not [string]::IsNullOrWhiteSpace([string]$statusPayload.build_signature),
-        $statusPayload.tracking_mode -eq 'webxr-camera-access-worker-owned-image-target',
-        $statusPayload.server_tracking -eq $false,
-        $statusPayload.no_fallbacks -eq $true,
-        $statusPayload.smoke_report_endpoint -eq '/smoke-report'
-      )
-      if ($contractChecks -notcontains $false) {
+      if (Test-StatusContract $statusPayload) {
         $contract = $statusPayload
         $ready = $true
         break

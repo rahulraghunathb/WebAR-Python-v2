@@ -152,23 +152,157 @@
       .info-section { border-top: 1px solid rgba(255, 255, 255, 0.16); padding-top: 10px; margin-top: 10px; }
       .info-section-title { color: #fff; font-weight: 800; margin-bottom: 6px; }
       .start-overlay {
-        position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 20px;
-        background: rgba(0, 0, 0, 0.94); padding: 20px;
+        position: absolute; inset: 0; z-index: 30; display: flex; justify-content: center; align-items: center;
+        background: rgba(0, 0, 0, 0.94); padding: 16px;
       }
       .start-overlay.hidden { display: none; }
-      .start-title { font-size: 30px; font-weight: 800; color: #00d98a; text-align: center; }
-      .start-subtitle { color: #b0b0b0; font-size: 14px; text-align: center; max-width: 500px; line-height: 1.5; }
-      .permission-status { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-      .permission-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #666; }
+      .start-shell {
+        width: min(620px, calc(100vw - 32px));
+        max-height: min(92vh, 760px);
+        display: grid;
+        gap: 16px;
+        padding: 22px;
+        border-radius: 28px;
+        background: linear-gradient(180deg, rgba(7, 15, 18, 0.96), rgba(1, 6, 8, 0.94));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.36);
+        overflow: hidden;
+      }
+      .start-title { font-size: clamp(26px, 4vw, 34px); font-weight: 800; color: #00d98a; text-align: center; }
+      .start-subtitle { color: #b0b0b0; font-size: 14px; text-align: center; max-width: 520px; margin: 0 auto; line-height: 1.5; }
+      .target-picker {
+        width: 100%;
+        display: grid;
+        gap: 12px;
+      }
+      .target-picker-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+      .target-picker.single-target .target-picker-head {
+        justify-content: center;
+      }
+      .target-picker-title {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: rgba(255, 255, 255, 0.64);
+      }
+      .target-picker-link {
+        color: #7feec0;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .target-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+      }
+      .target-grid.hidden {
+        display: none;
+      }
+      .target-card {
+        position: relative;
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(4, 12, 14, 0.72);
+        color: #fff;
+        cursor: pointer;
+        text-align: left;
+        transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      }
+      .target-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(0, 216, 138, 0.44);
+      }
+      .target-card.active {
+        border-color: rgba(0, 216, 138, 0.82);
+        box-shadow: 0 12px 28px rgba(0, 216, 138, 0.16);
+      }
+      .target-card-thumb {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .target-card-name {
+        font-size: 15px;
+        font-weight: 800;
+      }
+      .target-card-copy {
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .target-card-meta {
+        font-size: 11px;
+        color: #95efc8;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .target-preview {
+        display: grid;
+        grid-template-columns: 136px 1fr;
+        gap: 16px;
+        padding: 16px;
+        border-radius: 22px;
+        background: rgba(4, 12, 14, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        align-items: center;
+      }
+      .target-preview-image {
+        width: 136px;
+        aspect-ratio: 4 / 5;
+        object-fit: cover;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .target-preview-label {
+        font-size: 18px;
+        font-weight: 800;
+        margin-bottom: 6px;
+      }
+      .target-preview-meta,
+      .target-preview-hint {
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .target-preview-hint strong {
+        color: #a9ffd6;
+      }
+      .permission-status {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .permission-item {
+        display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: #666;
+        min-height: 38px; text-align: center; border-radius: 999px; background: rgba(255, 255, 255, 0.06); padding: 0 12px;
+      }
       .permission-item.granted { color: #00c870; }
       .permission-item.denied { color: #ff4444; }
       .permission-item.optional { color: #e0b84c; }
       .start-btn {
+        width: 100%;
+        min-height: 56px;
         padding: 15px 34px; font-size: 18px; font-weight: 800; border: none; border-radius: 30px;
         background: linear-gradient(135deg, #00d98a, #0088ff); color: #fff; cursor: pointer; transition: transform 0.2s;
       }
       .start-btn:active { transform: scale(0.95); }
       .start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .start-footnote {
+        color: rgba(255, 255, 255, 0.52);
+        font-size: 12px;
+        text-align: center;
+      }
       .log-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
       .log-actions { display: flex; gap: 8px; }
       .log-btn { border: none; border-radius: 999px; padding: 7px 12px; background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
@@ -182,6 +316,21 @@
       @media (max-width: 720px) {
         .controls { right: 18px; left: 18px; justify-content: flex-end; flex-wrap: wrap; }
         .info-panel { top: 486px; max-height: calc(100vh - 566px); }
+        .target-preview {
+          grid-template-columns: 1fr;
+        }
+        .target-preview-image {
+          width: 100%;
+          max-width: 180px;
+          justify-self: center;
+        }
+        .permission-status {
+          grid-template-columns: 1fr;
+        }
+        .start-shell {
+          padding: 18px;
+          gap: 14px;
+        }
       }
     </style>
   </head>
@@ -314,18 +463,32 @@
         </div>
       </div>
       <div class="start-overlay" id="startOverlay">
-        <div class="start-title">Worker + WASM Target Tracking</div>
-        <div class="start-subtitle" id="startStatus">Checking immersive AR, raw camera access, Worker, and WebAssembly support. This build uses a repo-owned target tracker that binds the model directly to the configured image, with no fallback path.</div>
-        <div class="permission-status" id="permissionStatus">
-          <div class="permission-item" id="permXR">Checking WebXR Support</div>
-          <div class="permission-item" id="permCamera">Checking Raw Camera Access</div>
-          <div class="permission-item" id="permMotion">Optional Motion Sensors</div>
-          <div class="permission-item" id="permSession">Target Tracking Pipeline Not Started</div>
-        </div>
-        <button class="start-btn" id="startBtn" disabled>Start Target Tracking</button>
-        <div class="shortcut-links" style="position: static; justify-content: center;">
-          <a href="/reconstruction-dashboard" class="start-dashboard-link">Open Session Dashboard</a>
-          <a href="/camera-diagnostics" class="start-dashboard-link">Open Camera Test</a>
+        <div class="start-shell">
+          <div class="start-title">Image Target AR</div>
+          <div class="start-subtitle" id="startStatus">Checking immersive AR, raw camera access, Worker, and WebAssembly support.</div>
+          <div class="target-picker" id="targetPicker">
+            <div class="target-picker-head">
+              <div class="target-picker-title" id="targetPickerTitle">Target Image</div>
+              <a href="/static/alignment-tool/index.html" class="target-picker-link" id="alignmentToolLink">Adjust Alignment</a>
+            </div>
+            <div class="target-grid hidden" id="targetGrid"></div>
+            <div class="target-preview" id="targetPreview">
+              <img class="target-preview-image" id="targetPreviewImage" alt="Selected image target preview" />
+              <div>
+                <div class="target-preview-label" id="targetPreviewName">Configured Target</div>
+                <div class="target-preview-meta" id="targetPreviewMeta">Awaiting target catalog.</div>
+                <div class="target-preview-hint" id="targetPreviewHint"><strong>Scan hint:</strong> Hold the full target in view.</div>
+              </div>
+            </div>
+          </div>
+          <div class="permission-status" id="permissionStatus">
+            <div class="permission-item" id="permXR">Checking WebXR Support</div>
+            <div class="permission-item" id="permCamera">Checking Raw Camera Access</div>
+            <div class="permission-item" id="permMotion">Optional Motion Sensors</div>
+            <div class="permission-item" id="permSession">Target Tracking Pipeline Not Started</div>
+          </div>
+          <button class="start-btn" id="startBtn" disabled>Start AR</button>
+          <div class="start-footnote">One image target, one 3D overlay, and a cleaner launch flow.</div>
         </div>
       </div>
     </div>

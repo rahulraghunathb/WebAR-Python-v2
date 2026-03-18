@@ -1,3 +1,116 @@
+const CAMERA_ACCESS_ACTIVE_STATES = new Set([
+  'READY',
+  'CAPTURING',
+  'THROTTLED',
+  'BACKPRESSURE',
+  'IN_FLIGHT',
+])
+
+const WORLD_METRIC_FIELDS = [
+  'sessionState',
+  'visibilityState',
+  'worldState',
+  'targetState',
+  'targetName',
+  'targetVisible',
+  'targetUpdates',
+  'targetMeasuredWidthM',
+  'targetIndex',
+  'targetMatchCount',
+  'targetInlierCount',
+  'targetInlierRatio',
+  'targetConfidence',
+  'targetReprojectionPx',
+  'targetReferenceReady',
+  'targetReferenceFeatures',
+  'hitTestState',
+  'anchorState',
+  'workerState',
+  'wasmState',
+  'cameraAccessState',
+  'xrFps',
+  'viewport',
+  'localLatencyMs',
+  'surfaceHits',
+  'selectCount',
+  'placementCount',
+  'lastHitDistanceM',
+  'hasPlacement',
+  'filterSource',
+  'filterConfidence',
+  'measurementConfidence',
+  'baseMeasurementConfidence',
+  'workerProcMs',
+  'workerLatencyMs',
+  'residualTranslationM',
+  'residualRotationDeg',
+  'measurementDeltaTranslationM',
+  'measurementDeltaRotationDeg',
+  'posAlpha',
+  'rotAlpha',
+  'snapCount',
+  'filterFrames',
+  'speedMps',
+  'visualState',
+  'visualFrames',
+  'visualFrameSize',
+  'visualSourceSize',
+  'visualFeatureCount',
+  'visualFeatureDensity',
+  'visualBrightness',
+  'visualContrast',
+  'visualMotion',
+  'visualQuality',
+  'visualCaptureMs',
+  'visualProcMs',
+  'trackCount',
+  'matchCount',
+  'matchRatio',
+  'trackConfidence',
+  'averageTrackAge',
+  'maxTrackAge',
+  'longTrackRatio',
+  'keyframeCount',
+  'landmarkCount',
+  'stableLandmarkCount',
+  'staleLandmarkCount',
+  'staleLandmarkRatio',
+  'keyframeGrowthPerSec',
+  'landmarkGrowthPerSec',
+  'motionObservability',
+  'mapState',
+  'relocalizationScore',
+  'relocalizationKeyframeId',
+  'relocalizationAttemptCount',
+  'relocalizationRecoveryCount',
+  'lastRelocalizationDurationMs',
+  'currentRelocalizationDurationMs',
+  'motionVectorX',
+  'motionVectorY',
+  'motionScale',
+  'motionRotationDeg',
+  'visualOdometryConfidence',
+  'cameraCaptures',
+  'cameraSkippedThrottle',
+  'cameraSkippedBusy',
+  'cameraLastCaptureMs',
+  'cameraAverageCaptureMs',
+  'cameraCaptureIntervalMs',
+  'cameraCaptureMaxDimension',
+  'cameraFramePending',
+  'framebufferScale',
+]
+
+function copySelectedFields(target, source, fields) {
+  fields.forEach((field) => {
+    target[field] = source[field]
+  })
+}
+
+function roundedNumber(value, digits) {
+  return Number(Number(value || 0).toFixed(digits))
+}
+
 class CustomTrackerApp {
   constructor() {
     this.modelRenderer = new ModelRenderer('threeCanvas')
@@ -7,8 +120,8 @@ class CustomTrackerApp {
 
     this.imuManager = new DeviceMotionManager()
     this.cameraPipeline = new XRCameraFramePipeline({
-      maxDimension: 128,
-      minFrameIntervalMs: 300,
+      maxDimension: 160,
+      minFrameIntervalMs: 220,
       onLog: (message, data) => this.log(message, data, 'Camera'),
     })
     this.worldTracker = new WebXRWorldTracker({
@@ -26,6 +139,14 @@ class CustomTrackerApp {
     this.toggleBtn = document.getElementById('toggleBtn')
     this.resetBtn = document.getElementById('resetBtn')
     this.startOverlay = document.getElementById('startOverlay')
+    this.targetPicker = document.getElementById('targetPicker')
+    this.targetPickerTitle = document.getElementById('targetPickerTitle')
+    this.targetGrid = document.getElementById('targetGrid')
+    this.targetPreviewImage = document.getElementById('targetPreviewImage')
+    this.targetPreviewName = document.getElementById('targetPreviewName')
+    this.targetPreviewMeta = document.getElementById('targetPreviewMeta')
+    this.targetPreviewHint = document.getElementById('targetPreviewHint')
+    this.alignmentToolLink = document.getElementById('alignmentToolLink')
     this.startBtn = document.getElementById('startBtn')
     this.startStatus = document.getElementById('startStatus')
     this.runtimeLog = document.getElementById('runtimeLog')
@@ -48,6 +169,8 @@ class CustomTrackerApp {
     this.logLimit = 240
     this.backendSessionId = 'frontend-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1000000).toString(36)
     this.telemetrySequence = 0
+    this.targetProfiles = []
+    this.activeTargetId = ''
 
     this.metrics = {
       supportState: 'PENDING',
@@ -262,6 +385,152 @@ class CustomTrackerApp {
     this.log('Log buffer cleared', undefined, 'Logs')
   }
 
+  loadTargetCatalog() {
+    if (
+      !window.ModelTransformHelpers ||
+      typeof window.ModelTransformHelpers.getProfiles !== 'function'
+    ) {
+      this.targetProfiles = []
+      return null
+    }
+
+    this.targetProfiles = window.ModelTransformHelpers.getProfiles()
+    const activeProfile = window.ModelTransformHelpers.getProfile()
+    this.activeTargetId = activeProfile.id
+    return activeProfile
+  }
+
+  renderTargetPicker() {
+    if (!this.targetGrid || !this.targetPicker) {
+      return
+    }
+
+    const activeProfile = this.loadTargetCatalog()
+    this.targetGrid.innerHTML = ''
+
+    if (!this.targetProfiles.length || !activeProfile) {
+      return
+    }
+
+    const hasMultipleTargets = this.targetProfiles.length > 1
+    this.targetPicker.classList.toggle('single-target', !hasMultipleTargets)
+    this.targetGrid.classList.toggle('hidden', !hasMultipleTargets)
+    if (this.targetPickerTitle) {
+      this.targetPickerTitle.textContent = hasMultipleTargets ? 'Choose Image Target' : 'Target Image'
+    }
+
+    if (hasMultipleTargets) {
+      this.targetProfiles.forEach((profile) => {
+        const card = document.createElement('button')
+        card.type = 'button'
+        card.className = 'target-card' + (profile.id === this.activeTargetId ? ' active' : '')
+        card.dataset.targetId = profile.id
+        card.innerHTML =
+          '<img class="target-card-thumb" alt="" src="' + profile.thumbnailUrl + '">' +
+          '<div class="target-card-name">' + profile.name + '</div>' +
+          '<div class="target-card-copy">' + profile.description + '</div>' +
+          '<div class="target-card-meta">' + Math.round(profile.targetPhysicalWidthMeters * 100) + ' cm target</div>'
+        card.addEventListener('click', () => {
+          this.selectTargetProfile(profile.id)
+        })
+        this.targetGrid.appendChild(card)
+      })
+    }
+
+    this.updateTargetPreview(activeProfile)
+  }
+
+  updateAlignmentToolLink(profile) {
+    if (!this.alignmentToolLink || !profile) {
+      return
+    }
+    this.alignmentToolLink.href =
+      '/static/alignment-tool/index.html?target=' + encodeURIComponent(profile.id)
+  }
+
+  updateTargetPreview(profile) {
+    if (!profile) {
+      return
+    }
+    if (this.targetPreviewImage) {
+      this.targetPreviewImage.src = profile.thumbnailUrl || profile.targetImageUrl || ''
+    }
+    if (this.targetPreviewName) {
+      this.targetPreviewName.textContent = profile.name
+    }
+    if (this.targetPreviewMeta) {
+      this.targetPreviewMeta.textContent =
+        'Use this printed image target. Width: ' +
+        Math.round(profile.targetPhysicalWidthMeters * 100) +
+        ' cm. ' +
+        (profile.description || '')
+    }
+    if (this.targetPreviewHint) {
+      this.targetPreviewHint.innerHTML =
+        '<strong>Scan hint:</strong> ' + (profile.scanHint || 'Hold the full target in frame.')
+    }
+    this.updateAlignmentToolLink(profile)
+  }
+
+  selectTargetProfile(targetId, options = {}) {
+    if (
+      !window.ModelTransformHelpers ||
+      typeof window.ModelTransformHelpers.setActiveTarget !== 'function'
+    ) {
+      return null
+    }
+    const profile = window.ModelTransformHelpers.setActiveTarget(targetId, {
+      persist: options.persist !== false,
+      updateUrl: options.updateUrl !== false,
+    })
+    this.activeTargetId = profile.id
+    this.metrics.targetName = profile.name
+    this.renderTargetPicker()
+    this.updateTrackerHud()
+    this.updateInfoPanel()
+    this.log('Selected target profile', {
+      id: profile.id,
+      name: profile.name,
+      widthM: Number(profile.targetPhysicalWidthMeters.toFixed(3)),
+    }, 'Target')
+    return profile
+  }
+
+  describeGuidance(world) {
+    const profile = (
+      window.ModelTransformHelpers &&
+      typeof window.ModelTransformHelpers.getProfile === 'function'
+    )
+      ? window.ModelTransformHelpers.getProfile()
+      : null
+
+    if (!this.running) {
+      return profile && profile.scanHint
+        ? profile.scanHint
+        : 'Hold the full target in frame with even lighting.'
+    }
+
+    if (world.worldState === 'TRACKING' && world.targetVisible) {
+      return 'Target locked. Keep the image in view for the most stable overlay.'
+    }
+
+    if (world.targetState === 'DETECTED') {
+      return 'Target detected. Hold steady for a fresh pose solve.'
+    }
+
+    if (world.targetState === 'REACQUIRING' || world.worldState === 'RELOCALIZING') {
+      return 'Reacquiring target. Move slightly closer and bring the full image back into frame.'
+    }
+
+    if (world.visualQuality < 0.35 || world.visualFeatureCount < 10) {
+      return 'Improve lighting or move closer so the tracker can see stronger image features.'
+    }
+
+    return profile && profile.scanHint
+      ? profile.scanHint
+      : 'Scan the target image until the tracker confirms a lock.'
+  }
+
   async loadArchitectureContract() {
     try {
       const response = await fetch('/status', { cache: 'no-store' })
@@ -311,6 +580,10 @@ class CustomTrackerApp {
     ].includes(key)
   }
 
+  syncWorldMetrics(diagnostics) {
+    copySelectedFields(this.metrics, diagnostics, WORLD_METRIC_FIELDS)
+  }
+
   buildBackendTelemetryPayload(kind, extra = {}) {
     const world = this.worldTracker.getDiagnostics()
     const render = this.modelRenderer.getDiagnostics()
@@ -320,7 +593,7 @@ class CustomTrackerApp {
       seq: ++this.telemetrySequence,
       sessionId: this.backendSessionId,
       sentAtIso: new Date().toISOString(),
-      elapsedMs: Number((performance.now() - this.runtimeStartAt).toFixed(2)),
+      elapsedMs: roundedNumber(performance.now() - this.runtimeStartAt, 2),
       buildSignature: this.metrics.buildSignature,
       trackingMode: this.metrics.trackingMode,
       researchTrack: this.metrics.researchTrack,
@@ -331,13 +604,16 @@ class CustomTrackerApp {
       targetName: world.targetName,
       targetVisible: Boolean(world.targetVisible),
       targetUpdates: Number(world.targetUpdates || 0),
-      targetMeasuredWidthM: Number((world.targetMeasuredWidthM || 0).toFixed(3)),
+      targetMeasuredWidthM: roundedNumber(world.targetMeasuredWidthM, 3),
       targetIndex: typeof world.targetIndex === 'number' ? world.targetIndex : -1,
       targetMatchCount: Number(world.targetMatchCount || 0),
       targetInlierCount: Number(world.targetInlierCount || 0),
-      targetInlierRatio: Number(((world.targetInlierRatio || (world.targetMatchCount ? world.targetInlierCount / world.targetMatchCount : 0)) || 0).toFixed(3)),
-      targetConfidence: Number((world.targetConfidence || 0).toFixed(3)),
-      targetReprojectionPx: Number((world.targetReprojectionPx || 0).toFixed(3)),
+      targetInlierRatio: roundedNumber(
+        world.targetInlierRatio || (world.targetMatchCount ? world.targetInlierCount / world.targetMatchCount : 0),
+        3
+      ),
+      targetConfidence: roundedNumber(world.targetConfidence, 3),
+      targetReprojectionPx: roundedNumber(world.targetReprojectionPx, 3),
       targetReferenceReady: Boolean(world.targetReferenceReady),
       targetReferenceFeatures: Number(world.targetReferenceFeatures || 0),
       hitTestState: world.hitTestState,
@@ -347,38 +623,38 @@ class CustomTrackerApp {
       cameraAccessState: world.cameraAccessState,
       visualState: world.visualState,
       visualFeatureCount: world.visualFeatureCount,
-      visualQuality: Number(world.visualQuality.toFixed(3)),
-      visualProcMs: Number(world.visualProcMs.toFixed(3)),
-      visualCaptureMs: Number(world.visualCaptureMs.toFixed(3)),
+      visualQuality: roundedNumber(world.visualQuality, 3),
+      visualProcMs: roundedNumber(world.visualProcMs, 3),
+      visualCaptureMs: roundedNumber(world.visualCaptureMs, 3),
       trackCount: world.trackCount,
-      averageTrackAge: Number((world.averageTrackAge || 0).toFixed(3)),
-      maxTrackAge: Number((world.maxTrackAge || 0).toFixed(3)),
-      longTrackRatio: Number((world.longTrackRatio || 0).toFixed(3)),
+      averageTrackAge: roundedNumber(world.averageTrackAge, 3),
+      maxTrackAge: roundedNumber(world.maxTrackAge, 3),
+      longTrackRatio: roundedNumber(world.longTrackRatio, 3),
       matchCount: world.matchCount,
       keyframeCount: world.keyframeCount,
       landmarkCount: world.landmarkCount,
       stableLandmarkCount: Number(world.stableLandmarkCount || 0),
       staleLandmarkCount: Number(world.staleLandmarkCount || 0),
-      staleLandmarkRatio: Number((world.staleLandmarkRatio || 0).toFixed(3)),
-      keyframeGrowthPerSec: Number((world.keyframeGrowthPerSec || 0).toFixed(3)),
-      landmarkGrowthPerSec: Number((world.landmarkGrowthPerSec || 0).toFixed(3)),
-      motionObservability: Number((world.motionObservability || 0).toFixed(3)),
+      staleLandmarkRatio: roundedNumber(world.staleLandmarkRatio, 3),
+      keyframeGrowthPerSec: roundedNumber(world.keyframeGrowthPerSec, 3),
+      landmarkGrowthPerSec: roundedNumber(world.landmarkGrowthPerSec, 3),
+      motionObservability: roundedNumber(world.motionObservability, 3),
       mapState: world.mapState,
-      relocalizationScore: Number(world.relocalizationScore.toFixed(3)),
+      relocalizationScore: roundedNumber(world.relocalizationScore, 3),
       relocalizationAttemptCount: Number(world.relocalizationAttemptCount || 0),
       relocalizationRecoveryCount: Number(world.relocalizationRecoveryCount || 0),
-      lastRelocalizationDurationMs: Number((world.lastRelocalizationDurationMs || 0).toFixed(2)),
-      currentRelocalizationDurationMs: Number((world.currentRelocalizationDurationMs || 0).toFixed(2)),
-      filterConfidence: Number(world.filterConfidence.toFixed(3)),
+      lastRelocalizationDurationMs: roundedNumber(world.lastRelocalizationDurationMs, 2),
+      currentRelocalizationDurationMs: roundedNumber(world.currentRelocalizationDurationMs, 2),
+      filterConfidence: roundedNumber(world.filterConfidence, 3),
       surfaceHits: Number(world.surfaceHits || 0),
       hasPlacement: Boolean(world.hasPlacement),
       xrFps: Number(world.xrFps || 0),
-      frameTimeMs: Number(render.lastFrameMs.toFixed(2)),
-      workerProcMs: Number(world.workerProcMs.toFixed(3)),
-      workerLatencyMs: Number(world.workerLatencyMs.toFixed(3)),
-      measurementDeltaTranslationM: Number(((world.measurementDeltaTranslationM || world.residualTranslationM || 0)).toFixed(4)),
-      measurementDeltaRotationDeg: Number(((world.measurementDeltaRotationDeg || world.residualRotationDeg || 0)).toFixed(3)),
-      cameraAverageCaptureMs: Number(world.cameraAverageCaptureMs.toFixed(3)),
+      frameTimeMs: roundedNumber(render.lastFrameMs, 2),
+      workerProcMs: roundedNumber(world.workerProcMs, 3),
+      workerLatencyMs: roundedNumber(world.workerLatencyMs, 3),
+      measurementDeltaTranslationM: roundedNumber(world.measurementDeltaTranslationM || world.residualTranslationM, 4),
+      measurementDeltaRotationDeg: roundedNumber(world.measurementDeltaRotationDeg || world.residualRotationDeg, 3),
+      cameraAverageCaptureMs: roundedNumber(world.cameraAverageCaptureMs, 3),
       cameraCaptureIntervalMs: Number(world.cameraCaptureIntervalMs || 0),
       cameraCaptureMaxDimension: Number(world.cameraCaptureMaxDimension || 0),
       cameraSkippedThrottle: Number(world.cameraSkippedThrottle || 0),
@@ -489,6 +765,7 @@ class CustomTrackerApp {
         return
       }
       this.log('Page restored from cache, resetting runtime state')
+      this.renderTargetPicker()
       this.modelRenderer.resetPose()
       this.running = false
       this.setScreenMode('start')
@@ -510,13 +787,18 @@ class CustomTrackerApp {
     this.setPermissionState('permMotion', 'optional', 'Optional Motion Sensors')
     this.setPermissionState('permSession', 'pending', 'Target Tracking Pipeline Not Started')
     this.setDebugOverlayVisible(false)
+    this.renderTargetPicker()
     this.handleResize()
     this.updateTrackerHud()
 
     const support = await this.worldTracker.checkSupport()
     this.metrics.supportState = this.worldTracker.getDiagnostics().supportState
     if (support.supported) {
-      this.startStatus.textContent = 'Worker + WASM target tracking is ready. This build uses camera-access plus a repo-owned image-target tracker, with no browser image-tracking dependency and no fallback path.'
+      const activeProfile = this.loadTargetCatalog()
+      this.startStatus.textContent =
+        'Ready to scan ' +
+        (activeProfile ? activeProfile.name : 'the target image') +
+        '. Point the camera at the printed image to place the 3D model.'
       this.setPermissionState('permXR', 'granted', 'WebXR Ready')
       this.setPermissionState('permCamera', 'granted', 'Raw Camera Access Available')
       this.startBtn.disabled = false
@@ -540,10 +822,12 @@ class CustomTrackerApp {
       return
     }
 
+    const activeProfile = this.loadTargetCatalog()
     this.cleanedUp = false
     this.startBtn.disabled = true
     this.badge.classList.remove('visible')
-    this.startStatus.textContent = 'Loading model...'
+      this.startStatus.textContent =
+        'Loading ' + (activeProfile ? activeProfile.name : 'target image') + '...'
     this.setPermissionState('permSession', 'pending', 'Preparing Target Tracking Pipeline')
 
     try {
@@ -562,7 +846,8 @@ class CustomTrackerApp {
         this.logTransition('imu', 'UNAVAILABLE')
       }
 
-      this.startStatus.textContent = 'Starting worker + WASM owned target-tracking session...'
+      this.startStatus.textContent =
+        'Starting AR for ' + (activeProfile ? activeProfile.name : 'the target image') + '...'
       await this.worldTracker.start()
       this.running = true
       this.setScreenMode('tracking')
@@ -595,98 +880,7 @@ class CustomTrackerApp {
   }
 
   handleWorldStateChange(state, diagnostics) {
-    this.metrics.sessionState = diagnostics.sessionState
-    this.metrics.visibilityState = diagnostics.visibilityState
-    this.metrics.worldState = diagnostics.worldState
-    this.metrics.targetState = diagnostics.targetState
-    this.metrics.targetName = diagnostics.targetName
-    this.metrics.targetVisible = diagnostics.targetVisible
-    this.metrics.targetUpdates = diagnostics.targetUpdates
-    this.metrics.targetMeasuredWidthM = diagnostics.targetMeasuredWidthM
-    this.metrics.targetIndex = diagnostics.targetIndex
-    this.metrics.targetMatchCount = diagnostics.targetMatchCount
-    this.metrics.targetInlierCount = diagnostics.targetInlierCount
-    this.metrics.targetInlierRatio = diagnostics.targetInlierRatio
-    this.metrics.targetConfidence = diagnostics.targetConfidence
-    this.metrics.targetReprojectionPx = diagnostics.targetReprojectionPx
-    this.metrics.targetReferenceReady = diagnostics.targetReferenceReady
-    this.metrics.targetReferenceFeatures = diagnostics.targetReferenceFeatures
-    this.metrics.hitTestState = diagnostics.hitTestState
-    this.metrics.anchorState = diagnostics.anchorState
-    this.metrics.workerState = diagnostics.workerState
-    this.metrics.wasmState = diagnostics.wasmState
-    this.metrics.cameraAccessState = diagnostics.cameraAccessState
-    this.metrics.surfaceHits = diagnostics.surfaceHits
-    this.metrics.selectCount = diagnostics.selectCount
-    this.metrics.placementCount = diagnostics.placementCount
-    this.metrics.lastHitDistanceM = diagnostics.lastHitDistanceM
-    this.metrics.xrFps = diagnostics.xrFps
-    this.metrics.viewport = diagnostics.viewport
-    this.metrics.localLatencyMs = diagnostics.localLatencyMs
-    this.metrics.hasPlacement = diagnostics.hasPlacement
-    this.metrics.filterSource = diagnostics.filterSource
-    this.metrics.filterConfidence = diagnostics.filterConfidence
-    this.metrics.measurementConfidence = diagnostics.measurementConfidence
-    this.metrics.baseMeasurementConfidence = diagnostics.baseMeasurementConfidence
-    this.metrics.workerProcMs = diagnostics.workerProcMs
-    this.metrics.workerLatencyMs = diagnostics.workerLatencyMs
-    this.metrics.residualTranslationM = diagnostics.residualTranslationM
-    this.metrics.residualRotationDeg = diagnostics.residualRotationDeg
-    this.metrics.measurementDeltaTranslationM = diagnostics.measurementDeltaTranslationM
-    this.metrics.measurementDeltaRotationDeg = diagnostics.measurementDeltaRotationDeg
-    this.metrics.posAlpha = diagnostics.posAlpha
-    this.metrics.rotAlpha = diagnostics.rotAlpha
-    this.metrics.snapCount = diagnostics.snapCount
-    this.metrics.filterFrames = diagnostics.filterFrames
-    this.metrics.speedMps = diagnostics.speedMps
-    this.metrics.visualState = diagnostics.visualState
-    this.metrics.visualFrames = diagnostics.visualFrames
-    this.metrics.visualFrameSize = diagnostics.visualFrameSize
-    this.metrics.visualSourceSize = diagnostics.visualSourceSize
-    this.metrics.visualFeatureCount = diagnostics.visualFeatureCount
-    this.metrics.visualFeatureDensity = diagnostics.visualFeatureDensity
-    this.metrics.visualBrightness = diagnostics.visualBrightness
-    this.metrics.visualContrast = diagnostics.visualContrast
-    this.metrics.visualMotion = diagnostics.visualMotion
-    this.metrics.visualQuality = diagnostics.visualQuality
-    this.metrics.visualCaptureMs = diagnostics.visualCaptureMs
-    this.metrics.visualProcMs = diagnostics.visualProcMs
-    this.metrics.trackCount = diagnostics.trackCount
-    this.metrics.averageTrackAge = diagnostics.averageTrackAge
-    this.metrics.maxTrackAge = diagnostics.maxTrackAge
-    this.metrics.longTrackRatio = diagnostics.longTrackRatio
-    this.metrics.matchCount = diagnostics.matchCount
-    this.metrics.matchRatio = diagnostics.matchRatio
-    this.metrics.trackConfidence = diagnostics.trackConfidence
-    this.metrics.keyframeCount = diagnostics.keyframeCount
-    this.metrics.landmarkCount = diagnostics.landmarkCount
-    this.metrics.stableLandmarkCount = diagnostics.stableLandmarkCount
-    this.metrics.staleLandmarkCount = diagnostics.staleLandmarkCount
-    this.metrics.staleLandmarkRatio = diagnostics.staleLandmarkRatio
-    this.metrics.keyframeGrowthPerSec = diagnostics.keyframeGrowthPerSec
-    this.metrics.landmarkGrowthPerSec = diagnostics.landmarkGrowthPerSec
-    this.metrics.motionObservability = diagnostics.motionObservability
-    this.metrics.mapState = diagnostics.mapState
-    this.metrics.relocalizationScore = diagnostics.relocalizationScore
-    this.metrics.relocalizationKeyframeId = diagnostics.relocalizationKeyframeId
-    this.metrics.relocalizationAttemptCount = diagnostics.relocalizationAttemptCount
-    this.metrics.relocalizationRecoveryCount = diagnostics.relocalizationRecoveryCount
-    this.metrics.lastRelocalizationDurationMs = diagnostics.lastRelocalizationDurationMs
-    this.metrics.currentRelocalizationDurationMs = diagnostics.currentRelocalizationDurationMs
-    this.metrics.motionVectorX = diagnostics.motionVectorX
-    this.metrics.motionVectorY = diagnostics.motionVectorY
-    this.metrics.motionScale = diagnostics.motionScale
-    this.metrics.motionRotationDeg = diagnostics.motionRotationDeg
-    this.metrics.visualOdometryConfidence = diagnostics.visualOdometryConfidence
-    this.metrics.cameraCaptures = diagnostics.cameraCaptures
-    this.metrics.cameraSkippedThrottle = diagnostics.cameraSkippedThrottle
-    this.metrics.cameraSkippedBusy = diagnostics.cameraSkippedBusy
-    this.metrics.cameraLastCaptureMs = diagnostics.cameraLastCaptureMs
-    this.metrics.cameraAverageCaptureMs = diagnostics.cameraAverageCaptureMs
-    this.metrics.cameraCaptureIntervalMs = diagnostics.cameraCaptureIntervalMs
-    this.metrics.cameraCaptureMaxDimension = diagnostics.cameraCaptureMaxDimension
-    this.metrics.cameraFramePending = diagnostics.cameraFramePending
-    this.metrics.framebufferScale = diagnostics.framebufferScale
+    this.syncWorldMetrics(diagnostics)
 
     this.logTransition('session', diagnostics.sessionState)
     this.logTransition('world', state)
@@ -698,13 +892,7 @@ class CustomTrackerApp {
     this.logTransition('camera-access', diagnostics.cameraAccessState)
     this.logTransition('visual', diagnostics.visualState)
 
-    if (
-      diagnostics.cameraAccessState === 'READY' ||
-      diagnostics.cameraAccessState === 'CAPTURING' ||
-      diagnostics.cameraAccessState === 'THROTTLED' ||
-      diagnostics.cameraAccessState === 'BACKPRESSURE' ||
-      diagnostics.cameraAccessState === 'IN_FLIGHT'
-    ) {
+    if (CAMERA_ACCESS_ACTIVE_STATES.has(diagnostics.cameraAccessState)) {
       this.setPermissionState('permCamera', 'granted', 'Raw Camera Frames Active')
     }
 
@@ -712,6 +900,7 @@ class CustomTrackerApp {
       this.running = false
       this.setScreenMode('start')
       this.startOverlay.classList.remove('hidden')
+      this.renderTargetPicker()
       this.startStatus.textContent = 'AR session ended. Tap start to re-enter worker + WASM owned target tracking.'
       this.startBtn.disabled = this.metrics.supportState !== 'SUPPORTED'
       this.setPermissionState('permSession', 'pending', 'Target Tracking Pipeline Not Started')
@@ -722,6 +911,7 @@ class CustomTrackerApp {
       this.running = false
       this.setScreenMode('start')
       this.startOverlay.classList.remove('hidden')
+      this.renderTargetPicker()
       this.startStatus.textContent = 'Target tracking encountered an error. Tap start to try again.'
       this.startBtn.disabled = this.metrics.supportState !== 'SUPPORTED'
       this.badge.classList.remove('visible')
@@ -757,13 +947,18 @@ class CustomTrackerApp {
       return
     }
 
-    if (world.worldState === 'RELOCALIZING' || (world.hasPlacement && !world.targetVisible)) {
-      this.badge.textContent = 'Reacquire Target ' + Math.round(world.visualQuality * 100) + '% visual'
+    if (
+      world.targetState === 'DETECTED' ||
+      world.targetState === 'REACQUIRING' ||
+      world.worldState === 'RELOCALIZING' ||
+      (world.hasPlacement && !world.targetVisible)
+    ) {
+      this.badge.textContent = this.describeGuidance(world)
       this.badge.classList.add('visible')
       return
     }
 
-    this.badge.textContent = 'Scan Target Image'
+    this.badge.textContent = this.describeGuidance(world)
     this.badge.classList.add('visible')
   }
 
@@ -810,84 +1005,9 @@ class CustomTrackerApp {
     const world = this.worldTracker.getDiagnostics()
     const render = this.modelRenderer.getDiagnostics()
 
-    this.metrics.sessionState = world.sessionState
-    this.metrics.visibilityState = world.visibilityState
-    this.metrics.worldState = world.worldState
-    this.metrics.targetState = world.targetState
-    this.metrics.targetName = world.targetName
-    this.metrics.targetVisible = world.targetVisible
-    this.metrics.targetUpdates = world.targetUpdates
-    this.metrics.targetMeasuredWidthM = world.targetMeasuredWidthM
-    this.metrics.targetIndex = world.targetIndex
-    this.metrics.targetMatchCount = world.targetMatchCount
-    this.metrics.targetInlierCount = world.targetInlierCount
-    this.metrics.targetConfidence = world.targetConfidence
-    this.metrics.targetReprojectionPx = world.targetReprojectionPx
-    this.metrics.targetReferenceReady = world.targetReferenceReady
-    this.metrics.targetReferenceFeatures = world.targetReferenceFeatures
-    this.metrics.hitTestState = world.hitTestState
-    this.metrics.anchorState = world.anchorState
-    this.metrics.workerState = world.workerState
-    this.metrics.wasmState = world.wasmState
-    this.metrics.cameraAccessState = world.cameraAccessState
-    this.metrics.xrFps = world.xrFps
-    this.metrics.viewport = world.viewport
+    this.syncWorldMetrics(world)
     this.metrics.frameTimeMs = render.lastFrameMs
-    this.metrics.localLatencyMs = world.localLatencyMs
-    this.metrics.surfaceHits = world.surfaceHits
-    this.metrics.selectCount = world.selectCount
-    this.metrics.placementCount = world.placementCount
-    this.metrics.lastHitDistanceM = world.lastHitDistanceM
-    this.metrics.hasPlacement = world.hasPlacement
     this.metrics.renderState = render.renderState
-    this.metrics.filterSource = world.filterSource
-    this.metrics.filterConfidence = world.filterConfidence
-    this.metrics.measurementConfidence = world.measurementConfidence
-    this.metrics.baseMeasurementConfidence = world.baseMeasurementConfidence
-    this.metrics.workerProcMs = world.workerProcMs
-    this.metrics.workerLatencyMs = world.workerLatencyMs
-    this.metrics.residualTranslationM = world.residualTranslationM
-    this.metrics.residualRotationDeg = world.residualRotationDeg
-    this.metrics.posAlpha = world.posAlpha
-    this.metrics.rotAlpha = world.rotAlpha
-    this.metrics.snapCount = world.snapCount
-    this.metrics.filterFrames = world.filterFrames
-    this.metrics.speedMps = world.speedMps
-    this.metrics.visualState = world.visualState
-    this.metrics.visualFrames = world.visualFrames
-    this.metrics.visualFrameSize = world.visualFrameSize
-    this.metrics.visualSourceSize = world.visualSourceSize
-    this.metrics.visualFeatureCount = world.visualFeatureCount
-    this.metrics.visualFeatureDensity = world.visualFeatureDensity
-    this.metrics.visualBrightness = world.visualBrightness
-    this.metrics.visualContrast = world.visualContrast
-    this.metrics.visualMotion = world.visualMotion
-    this.metrics.visualQuality = world.visualQuality
-    this.metrics.visualCaptureMs = world.visualCaptureMs
-    this.metrics.visualProcMs = world.visualProcMs
-    this.metrics.trackCount = world.trackCount
-    this.metrics.matchCount = world.matchCount
-    this.metrics.matchRatio = world.matchRatio
-    this.metrics.trackConfidence = world.trackConfidence
-    this.metrics.keyframeCount = world.keyframeCount
-    this.metrics.landmarkCount = world.landmarkCount
-    this.metrics.mapState = world.mapState
-    this.metrics.relocalizationScore = world.relocalizationScore
-    this.metrics.relocalizationKeyframeId = world.relocalizationKeyframeId
-    this.metrics.motionVectorX = world.motionVectorX
-    this.metrics.motionVectorY = world.motionVectorY
-    this.metrics.motionScale = world.motionScale
-    this.metrics.motionRotationDeg = world.motionRotationDeg
-    this.metrics.visualOdometryConfidence = world.visualOdometryConfidence
-    this.metrics.cameraCaptures = world.cameraCaptures
-    this.metrics.cameraSkippedThrottle = world.cameraSkippedThrottle
-    this.metrics.cameraSkippedBusy = world.cameraSkippedBusy
-    this.metrics.cameraLastCaptureMs = world.cameraLastCaptureMs
-    this.metrics.cameraAverageCaptureMs = world.cameraAverageCaptureMs
-    this.metrics.cameraCaptureIntervalMs = world.cameraCaptureIntervalMs
-    this.metrics.cameraCaptureMaxDimension = world.cameraCaptureMaxDimension
-    this.metrics.cameraFramePending = world.cameraFramePending
-    this.metrics.framebufferScale = world.framebufferScale
   }
 
   updateLocalInfo() {
@@ -934,9 +1054,9 @@ class CustomTrackerApp {
       return
     }
 
-    let maxDimension = 160
-    let minFrameIntervalMs = 220
-    let reason = 'target-search-accuracy'
+    let maxDimension = 192
+    let minFrameIntervalMs = 180
+    let reason = 'target-search-acquire'
     const hasFpsSample = this.metrics.xrFps > 0
     const averageCaptureMs = Number(camera.averageCaptureMs || 0)
     const captureBackedUp = Boolean(camera.inFlight && averageCaptureMs > 12)
@@ -947,9 +1067,12 @@ class CustomTrackerApp {
       reason = 'target-locked-accuracy'
     }
 
-    if (!this.metrics.hasPlacement && this.metrics.targetState === 'DETECTED') {
-      maxDimension = 224
-      minFrameIntervalMs = 180
+    if (
+      !this.metrics.hasPlacement &&
+      (this.metrics.targetState === 'DETECTED' || this.metrics.targetState === 'REACQUIRING')
+    ) {
+      maxDimension = 256
+      minFrameIntervalMs = 140
       reason = 'target-confirm-accuracy'
     }
 
@@ -960,8 +1083,8 @@ class CustomTrackerApp {
       this.metrics.visualFeatureCount < 14 &&
       averageCaptureMs < 10
     ) {
-      maxDimension = 224
-      minFrameIntervalMs = 180
+      maxDimension = 256
+      minFrameIntervalMs = 150
       reason = 'diagnostic-boost-accuracy'
     }
 
@@ -1166,7 +1289,7 @@ class CustomTrackerApp {
     const targetState =
       world.targetState === 'TRACKING'
         ? 'good'
-        : world.targetState === 'DETECTED' || world.targetState === 'SEARCHING' || world.targetState === 'READY' || world.targetState === 'LOADED'
+        : world.targetState === 'DETECTED' || world.targetState === 'REACQUIRING' || world.targetState === 'SEARCHING' || world.targetState === 'READY' || world.targetState === 'LOADED'
           ? 'warn'
           : world.targetState === 'LOST' || world.targetState === 'ERROR' || world.targetState === 'UNAVAILABLE' || world.targetState === 'REFERENCE_WEAK'
             ? 'bad'

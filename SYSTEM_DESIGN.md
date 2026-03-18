@@ -15,7 +15,7 @@ The active system is a strict client-side runtime:
 
 ```mermaid
 flowchart LR
-    A["/status contract"] --> B["tracking_mode = webxr-world-tracking-worker-wasm-camera-access"]
+    A["/status contract"] --> B["tracking_mode = webxr-camera-access-worker-owned-image-target"]
     A --> C["server_tracking = false"]
     A --> D["no_fallbacks = true"]
     A --> E["asset_mode = repo-vendored-threejs"]

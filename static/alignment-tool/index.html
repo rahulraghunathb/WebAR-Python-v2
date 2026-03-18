@@ -5,6 +5,126 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>3D Model Alignment Tool</title>
     <link rel="stylesheet" href="styles.css" />
+    <style>
+      .profile-group {
+        display: grid;
+        gap: 12px;
+      }
+
+      .profile-toolbar {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .profile-select {
+        width: 100%;
+        min-height: 38px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(10, 14, 22, 0.86);
+        color: #f4f6fb;
+        padding: 0 12px;
+      }
+
+      .profile-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(0, 200, 112, 0.14);
+        color: #90ffd0;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .profile-card {
+        display: grid;
+        grid-template-columns: 132px 1fr;
+        gap: 12px;
+        align-items: stretch;
+        padding: 12px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .profile-preview-wrap {
+        position: relative;
+        min-height: 132px;
+        border-radius: 12px;
+        overflow: hidden;
+        background: linear-gradient(135deg, rgba(0, 200, 112, 0.18), rgba(0, 136, 255, 0.18));
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .profile-preview {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .profile-preview-fallback {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 12px;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.76);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .profile-meta-grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .profile-meta-row {
+        display: grid;
+        grid-template-columns: 108px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        font-size: 12px;
+      }
+
+      .profile-meta-row span {
+        color: rgba(255, 255, 255, 0.56);
+      }
+
+      .profile-meta-row strong {
+        color: #f7fbff;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .profile-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .profile-footnote {
+        color: rgba(255, 255, 255, 0.58);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      @media (max-width: 860px) {
+        .profile-toolbar {
+          grid-template-columns: 1fr;
+        }
+
+        .profile-card {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
   </head>
   <body>
     <div class="app-container">
@@ -25,6 +145,42 @@
         </div>
 
         <div class="controls-panel">
+          <div class="control-group profile-group">
+            <h2>Target Profile</h2>
+            <div class="profile-toolbar">
+              <label for="profileSelect">Profile</label>
+              <select id="profileSelect" class="profile-select"></select>
+              <span id="profileBadge" class="profile-badge">Loading</span>
+            </div>
+            <div class="profile-card">
+              <div class="profile-preview-wrap">
+                <img id="profilePreview" class="profile-preview" alt="Selected target preview" />
+                <div id="profilePreviewFallback" class="profile-preview-fallback">
+                  Target preview will appear here.
+                </div>
+              </div>
+              <div class="profile-meta-grid">
+                <div class="profile-meta-row"><span>Name</span><strong id="profileName">-</strong></div>
+                <div class="profile-meta-row"><span>Key</span><strong id="profileKey">-</strong></div>
+                <div class="profile-meta-row"><span>Target</span><strong id="profileImage">-</strong></div>
+                <div class="profile-meta-row"><span>Model</span><strong id="profileAsset">-</strong></div>
+                <div class="profile-meta-row"><span>Width</span><strong id="profileWidth">-</strong></div>
+                <div class="profile-meta-row"><span>Base Scale</span><strong id="profileBaseScale">-</strong></div>
+                <div class="profile-meta-row"><span>Alignment</span><strong id="profileAlignment">-</strong></div>
+                <div class="profile-meta-row"><span>Storage</span><strong id="profileStorage">-</strong></div>
+              </div>
+            </div>
+            <div class="profile-actions">
+              <button id="saveProfileBtn" class="btn btn-secondary" type="button">Save Local</button>
+              <button id="restoreProfileBtn" class="btn btn-secondary" type="button">Restore Saved</button>
+              <button id="clearProfileBtn" class="btn btn-small" type="button">Clear Saved</button>
+            </div>
+            <div class="profile-footnote" id="profileFootnote">
+              Profiles auto-save to localStorage when available. Use the selector or query string
+              <code>?profile=...</code> to switch targets.
+            </div>
+          </div>
+
           <h2>Transform Controls</h2>
 
           <div class="control-group">
@@ -118,9 +274,9 @@
             <div class="output-format">
               <label>Format:</label>
               <select id="outputFormat">
-                <option value="json">JSON Object</option>
-                <option value="js">JavaScript Config</option>
-                <option value="threejs">Three.js Code</option>
+                <option value="json">Profile JSON</option>
+                <option value="js">Runtime JS</option>
+                <option value="threejs">Three.js Snippet</option>
               </select>
             </div>
             <div class="output-container">

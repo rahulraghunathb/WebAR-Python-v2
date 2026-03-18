@@ -25,7 +25,6 @@ const STATE_COLORS = {
 class ReconstructionDashboard {
   constructor() {
     this.sessions = []
-    this.limits = { sessionHistory: 0, eventsPerSession: 0 }
     this.selectedSessionId = null
     this.refreshTimer = 0
 
@@ -100,7 +99,6 @@ class ReconstructionDashboard {
       this.sessionListMeta.textContent = 'Loading session history...'
       const payload = await this.fetchJson('/api/reconstruction-sessions')
       this.sessions = Array.isArray(payload.sessions) ? payload.sessions : []
-      this.limits = payload.limits || this.limits
       this.renderSessionList()
 
       if (!this.sessions.length) {
@@ -113,7 +111,7 @@ class ReconstructionDashboard {
       const hasSelectedSession =
         preserveSelection && this.selectedSessionId && this.sessions.some((session) => session.sessionId === this.selectedSessionId)
       const nextSessionId = hasSelectedSession ? this.selectedSessionId : this.sessions[0].sessionId
-      await this.loadSession(nextSessionId, false)
+      await this.loadSession(nextSessionId)
       this.sessionListMeta.textContent =
         this.sessions.length +
         ' recent sessions | updated ' +
@@ -125,7 +123,7 @@ class ReconstructionDashboard {
     }
   }
 
-  async loadSession(sessionId, fetchListAfter = false) {
+  async loadSession(sessionId) {
     this.selectedSessionId = sessionId
     this.renderSessionList()
 
@@ -134,10 +132,7 @@ class ReconstructionDashboard {
       if (sessionId !== this.selectedSessionId) {
         return
       }
-      this.renderDetail(payload.session, Array.isArray(payload.events) ? payload.events : [], payload.limits || this.limits)
-      if (fetchListAfter) {
-        await this.refresh(true)
-      }
+      this.renderDetail(payload.session, Array.isArray(payload.events) ? payload.events : [])
     } catch (error) {
       console.error('[Dashboard] session load failed', error)
       this.showEmpty('Could not load the selected session. It may have rolled out of the in-memory history.')
@@ -174,12 +169,12 @@ class ReconstructionDashboard {
           '<span>' + this.escapeHtml(session.peakKeyframes + ' kf | ' + session.peakLandmarks + ' lm') + '</span>' +
           '<span>' + this.escapeHtml(this.formatNumber(session.maxFps, 1) + ' fps') + '</span>' +
         '</div>'
-      button.addEventListener('click', () => this.loadSession(session.sessionId, false))
+      button.addEventListener('click', () => this.loadSession(session.sessionId))
       this.sessionList.appendChild(button)
     })
   }
 
-  renderDetail(summary, events, limits) {
+  renderDetail(summary, events) {
     this.emptyState.classList.add('hidden')
     this.detailView.classList.remove('hidden')
 
@@ -582,11 +577,13 @@ class ReconstructionDashboard {
   }
 
   formatNumber(value, digits) {
-    return Number(value || 0).toFixed(digits)
+    const number = Number(value || 0)
+    return Number.isFinite(number) ? number.toFixed(digits) : Number(0).toFixed(digits)
   }
 
   formatChartValue(value, unit) {
-    const number = Number(value || 0)
+    const rawNumber = Number(value || 0)
+    const number = Number.isFinite(rawNumber) ? rawNumber : 0
     const abs = Math.abs(number)
     if (unit === 'ms') {
       return number.toFixed(abs >= 10 ? 0 : 1) + ' ms'

@@ -120,11 +120,106 @@ def most_common_text(events, field, fallback='-'):
     return Counter(filtered).most_common(1)[0][0]
 
 
+def build_reconstruction_limits():
+    return {
+        'sessionHistory': SESSION_HISTORY_LIMIT,
+        'eventsPerSession': SESSION_EVENT_LIMIT,
+    }
+
+
+def build_status_payload():
+    return {
+        'ready': True,
+        'build_signature': BUILD_SIGNATURE,
+        'research_track': RESEARCH_TRACK,
+        'tracking_mode': TRACKING_MODE,
+        'server_tracking': False,
+        'no_fallbacks': True,
+        'asset_mode': 'repo-vendored-threejs',
+        'features': FEATURES,
+        'feature_count': len(FEATURES),
+        'required_runtime_capabilities': REQUIRED_RUNTIME_CAPABILITIES,
+        'required_capability_count': len(REQUIRED_RUNTIME_CAPABILITIES),
+        'smoke_report_endpoint': '/smoke-report',
+        'frontend_telemetry_endpoint': '/frontend-telemetry',
+        'session_dashboard_endpoint': '/reconstruction-dashboard',
+        'camera_diagnostics_endpoint': '/camera-diagnostics',
+        'reconstruction_sessions_endpoint': '/api/reconstruction-sessions',
+        'backend_logging_mode': BACKEND_LOGGING_MODE,
+    }
+
+
+def build_frontend_log_fields(payload, kind, count):
+    return {
+        'count': count,
+        'kind': kind,
+        'session': payload.get('sessionId', '-'),
+        'seq': payload.get('seq', '-'),
+        'source': payload.get('source', '-'),
+        'build': payload.get('buildSignature'),
+        'tracking_mode': payload.get('trackingMode'),
+        'session_state': payload.get('sessionState'),
+        'reference_space': payload.get('referenceSpace'),
+        'world_state': payload.get('worldState'),
+        'target_state': payload.get('targetState'),
+        'target_name': payload.get('targetName'),
+        'target_visible': payload.get('targetVisible'),
+        'target_updates': payload.get('targetUpdates'),
+        'target_width_m': rounded_metric(payload.get('targetMeasuredWidthM')),
+        'target_index': payload.get('targetIndex'),
+        'target_matches': payload.get('targetMatchCount'),
+        'target_inliers': payload.get('targetInlierCount'),
+        'target_inlier_ratio': rounded_metric(payload.get('targetInlierRatio')),
+        'target_confidence': rounded_metric(payload.get('targetConfidence')),
+        'target_reproj_px': rounded_metric(payload.get('targetReprojectionPx'), 2),
+        'target_reference_ready': payload.get('targetReferenceReady'),
+        'target_reference_features': payload.get('targetReferenceFeatures'),
+        'hit_test': payload.get('hitTestState'),
+        'anchor_state': payload.get('anchorState'),
+        'worker_state': payload.get('workerState'),
+        'wasm_state': payload.get('wasmState'),
+        'camera_access': payload.get('cameraAccessState'),
+        'visual_state': payload.get('visualState'),
+        'visual_features': payload.get('visualFeatureCount'),
+        'tracks': payload.get('trackCount'),
+        'track_age': rounded_metric(payload.get('averageTrackAge')),
+        'matches': payload.get('matchCount'),
+        'keyframes': payload.get('keyframeCount'),
+        'landmarks': payload.get('landmarkCount'),
+        'stale_ratio': rounded_metric(payload.get('staleLandmarkRatio')),
+        'observability': rounded_metric(payload.get('motionObservability')),
+        'map_state': payload.get('mapState'),
+        'reloc': rounded_metric(payload.get('relocalizationScore')),
+        'reloc_ms': rounded_metric(payload.get('lastRelocalizationDurationMs'), 2),
+        'confidence': rounded_metric(payload.get('filterConfidence')),
+        'visual_quality': rounded_metric(payload.get('visualQuality')),
+        'visual_proc_ms': rounded_metric(payload.get('visualProcMs'), 2),
+        'visual_capture_ms': rounded_metric(payload.get('visualCaptureMs'), 2),
+        'surface_hits': payload.get('surfaceHits'),
+        'placed': payload.get('hasPlacement'),
+        'fps': rounded_metric(payload.get('xrFps'), 1),
+        'frame_ms': rounded_metric(payload.get('frameTimeMs'), 2),
+        'worker_ms': rounded_metric(payload.get('workerProcMs'), 2),
+        'delta_m': rounded_metric(payload.get('measurementDeltaTranslationM'), 4),
+        'delta_deg': rounded_metric(payload.get('measurementDeltaRotationDeg'), 3),
+        'capture_ms': rounded_metric(payload.get('cameraAverageCaptureMs'), 2),
+        'capture_interval_ms': payload.get('cameraCaptureIntervalMs'),
+        'capture_max_dim': payload.get('cameraCaptureMaxDimension'),
+        'skipped_throttle': payload.get('cameraSkippedThrottle'),
+        'skipped_busy': payload.get('cameraSkippedBusy'),
+        'pending': payload.get('cameraFramePending'),
+        'message': payload.get('message'),
+    }
+
+
 app = Flask(__name__, static_folder='static', template_folder='static')
 app.config['SECRET_KEY'] = 'custom-tracker-secret-key'
 
 LOGGER = create_backend_logger()
 BUILD_SIGNATURE = 'research-webxr-worker-wasm-owned-target-20260311d'
+RESEARCH_TRACK = 'client-owned-image-target-with-worker-wasm-feature-map'
+TRACKING_MODE = 'webxr-camera-access-worker-owned-image-target'
+BACKEND_LOGGING_MODE = 'frontend-runtime-telemetry'
 SESSION_EVENT_LIMIT = 240
 SESSION_HISTORY_LIMIT = 40
 ACTIVE_SESSION_WINDOW_S = 20
@@ -374,27 +469,7 @@ def camera_diagnostics():
 
 @app.route('/status')
 def status():
-    return jsonify(
-        {
-            'ready': True,
-            'build_signature': BUILD_SIGNATURE,
-            'research_track': 'client-owned-image-target-with-worker-wasm-feature-map',
-            'tracking_mode': 'webxr-camera-access-worker-owned-image-target',
-            'server_tracking': False,
-            'no_fallbacks': True,
-            'asset_mode': 'repo-vendored-threejs',
-            'features': FEATURES,
-            'feature_count': len(FEATURES),
-            'required_runtime_capabilities': REQUIRED_RUNTIME_CAPABILITIES,
-            'required_capability_count': len(REQUIRED_RUNTIME_CAPABILITIES),
-            'smoke_report_endpoint': '/smoke-report',
-            'frontend_telemetry_endpoint': '/frontend-telemetry',
-            'session_dashboard_endpoint': '/reconstruction-dashboard',
-            'camera_diagnostics_endpoint': '/camera-diagnostics',
-            'reconstruction_sessions_endpoint': '/api/reconstruction-sessions',
-            'backend_logging_mode': 'frontend-runtime-telemetry',
-        }
-    )
+    return jsonify(build_status_payload())
 
 
 @app.route('/frontend-telemetry', methods=['POST'])
@@ -407,67 +482,7 @@ def frontend_telemetry():
     FRONTEND_TELEMETRY['last_payload'] = payload
     FRONTEND_TELEMETRY['updated_at'] = received_at
     session = record_frontend_session(payload, kind, received_at)
-    log_backend(
-        'frontend.telemetry',
-        count=FRONTEND_TELEMETRY['count'],
-        kind=kind,
-        session=payload.get('sessionId', '-'),
-        seq=payload.get('seq', '-'),
-        source=payload.get('source', '-'),
-        build=payload.get('buildSignature'),
-        tracking_mode=payload.get('trackingMode'),
-        session_state=payload.get('sessionState'),
-        reference_space=payload.get('referenceSpace'),
-        world_state=payload.get('worldState'),
-        target_state=payload.get('targetState'),
-        target_name=payload.get('targetName'),
-        target_visible=payload.get('targetVisible'),
-        target_updates=payload.get('targetUpdates'),
-        target_width_m=rounded_metric(payload.get('targetMeasuredWidthM')),
-        target_index=payload.get('targetIndex'),
-        target_matches=payload.get('targetMatchCount'),
-        target_inliers=payload.get('targetInlierCount'),
-        target_inlier_ratio=rounded_metric(payload.get('targetInlierRatio')),
-        target_confidence=rounded_metric(payload.get('targetConfidence')),
-        target_reproj_px=rounded_metric(payload.get('targetReprojectionPx'), 2),
-        target_reference_ready=payload.get('targetReferenceReady'),
-        target_reference_features=payload.get('targetReferenceFeatures'),
-        hit_test=payload.get('hitTestState'),
-        anchor_state=payload.get('anchorState'),
-        worker_state=payload.get('workerState'),
-        wasm_state=payload.get('wasmState'),
-        camera_access=payload.get('cameraAccessState'),
-        visual_state=payload.get('visualState'),
-        visual_features=payload.get('visualFeatureCount'),
-        tracks=payload.get('trackCount'),
-        track_age=rounded_metric(payload.get('averageTrackAge')),
-        matches=payload.get('matchCount'),
-        keyframes=payload.get('keyframeCount'),
-        landmarks=payload.get('landmarkCount'),
-        stale_ratio=rounded_metric(payload.get('staleLandmarkRatio')),
-        observability=rounded_metric(payload.get('motionObservability')),
-        map_state=payload.get('mapState'),
-        reloc=rounded_metric(payload.get('relocalizationScore')),
-        reloc_ms=rounded_metric(payload.get('lastRelocalizationDurationMs'), 2),
-        confidence=rounded_metric(payload.get('filterConfidence')),
-        visual_quality=rounded_metric(payload.get('visualQuality')),
-        visual_proc_ms=rounded_metric(payload.get('visualProcMs'), 2),
-        visual_capture_ms=rounded_metric(payload.get('visualCaptureMs'), 2),
-        surface_hits=payload.get('surfaceHits'),
-        placed=payload.get('hasPlacement'),
-        fps=rounded_metric(payload.get('xrFps'), 1),
-        frame_ms=rounded_metric(payload.get('frameTimeMs'), 2),
-        worker_ms=rounded_metric(payload.get('workerProcMs'), 2),
-        delta_m=rounded_metric(payload.get('measurementDeltaTranslationM'), 4),
-        delta_deg=rounded_metric(payload.get('measurementDeltaRotationDeg'), 3),
-        capture_ms=rounded_metric(payload.get('cameraAverageCaptureMs'), 2),
-        capture_interval_ms=payload.get('cameraCaptureIntervalMs'),
-        capture_max_dim=payload.get('cameraCaptureMaxDimension'),
-        skipped_throttle=payload.get('cameraSkippedThrottle'),
-        skipped_busy=payload.get('cameraSkippedBusy'),
-        pending=payload.get('cameraFramePending'),
-        message=payload.get('message'),
-    )
+    log_backend('frontend.telemetry', **build_frontend_log_fields(payload, kind, FRONTEND_TELEMETRY['count']))
     return jsonify(
         {
             'ok': True,
@@ -484,10 +499,7 @@ def reconstruction_sessions():
     return jsonify(
         {
             'count': len(sessions),
-            'limits': {
-                'sessionHistory': SESSION_HISTORY_LIMIT,
-                'eventsPerSession': SESSION_EVENT_LIMIT,
-            },
+            'limits': build_reconstruction_limits(),
             'sessions': sessions,
         }
     )
@@ -500,10 +512,7 @@ def reconstruction_session_detail(session_id):
         abort(404)
     return jsonify(
         {
-            'limits': {
-                'sessionHistory': SESSION_HISTORY_LIMIT,
-                'eventsPerSession': SESSION_EVENT_LIMIT,
-            },
+            'limits': build_reconstruction_limits(),
             'session': build_session_summary(session),
             'events': list(session['events']),
         }

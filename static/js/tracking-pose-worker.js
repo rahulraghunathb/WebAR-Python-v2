@@ -39,8 +39,13 @@ const DEFAULT_CONFIG = {
   targetStableMinConfidence: 0.42,
   targetStableMinInliers: 7,
   targetStableMaxReprojectionPx: 4.5,
+  targetFreshPoseMs: 380,
   targetTrackHoldMs: 900,
   targetLostHoldMs: 1800,
+  targetMinCoverage: 0.012,
+  targetMaxAspectSkew: 5.2,
+  targetMaxStableTranslationDeltaM: 0.18,
+  targetMaxStableRotationDeltaDeg: 26,
 }
 
 const state = {
@@ -72,6 +77,7 @@ const state = {
     reprojectionPx: 0,
     confidence: 0,
     lastSeenTimestampMs: 0,
+    lastSolvedPoseTimestampMs: 0,
     updates: 0,
     stableFrames: 0,
     lockSamples: [],
@@ -350,6 +356,71 @@ function projectHomographyPoint(h, X, Y) {
   }
 }
 
+function polygonArea(points) {
+  if (!Array.isArray(points) || points.length < 3) {
+    return 0
+  }
+  let area = 0
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]
+    const next = points[(index + 1) % points.length]
+    area += current.x * next.y - next.x * current.y
+  }
+  return area * 0.5
+}
+
+function distance2(a, b) {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+function projectTargetCorners(homography) {
+  const halfWidth = Number(state.reference.physicalWidthM || 0) * 0.5
+  const halfHeight = Number(state.reference.physicalHeightM || 0) * 0.5
+  return [
+    projectHomographyPoint(homography, -halfWidth, halfHeight),
+    projectHomographyPoint(homography, halfWidth, halfHeight),
+    projectHomographyPoint(homography, halfWidth, -halfHeight),
+    projectHomographyPoint(homography, -halfWidth, -halfHeight),
+  ]
+}
+
+function isPlausibleTargetQuadrilateral(corners, width, height) {
+  if (!Array.isArray(corners) || corners.some((corner) => !corner)) {
+    return false
+  }
+
+  const area = Math.abs(polygonArea(corners))
+  const frameArea = Math.max(1, width * height)
+  const coverage = area / frameArea
+  const minCoverage = Math.max(0.001, Number(state.config.targetMinCoverage || 0.012))
+  if (coverage < minCoverage) {
+    return false
+  }
+
+  const edgeLengths = [
+    distance2(corners[0], corners[1]),
+    distance2(corners[1], corners[2]),
+    distance2(corners[2], corners[3]),
+    distance2(corners[3], corners[0]),
+  ]
+  const minEdge = Math.max(1e-4, Math.min.apply(null, edgeLengths))
+  const maxEdge = Math.max.apply(null, edgeLengths)
+  const maxAspectSkew = Math.max(1.5, Number(state.config.targetMaxAspectSkew || 5.2))
+  if (maxEdge / minEdge > maxAspectSkew) {
+    return false
+  }
+
+  const visibleCorners = corners.filter((corner) => (
+    corner.x >= -width * 0.15 &&
+    corner.x <= width * 1.15 &&
+    corner.y >= -height * 0.15 &&
+    corner.y <= height * 1.15
+  ))
+  return visibleCorners.length >= 3
+}
+
 function sampleUniqueIndices(total, count) {
   const selected = new Set()
   while (selected.size < count) {
@@ -552,6 +623,10 @@ function estimateTargetPose(referenceMatches, projectionMatrix, cameraWorldMatri
   if (refined.inliers.length < minTargetInliers) {
     return null
   }
+  const projectedCorners = projectTargetCorners(refinedHomography)
+  if (!isPlausibleTargetQuadrilateral(projectedCorners, width, height)) {
+    return null
+  }
 
   const intrinsics = deriveCameraIntrinsics(projectionMatrix, width, height)
   const targetCameraCv = homographyToCameraMatrix(refinedHomography, intrinsics)
@@ -617,9 +692,9 @@ function setReferenceImage(payload) {
   state.reference.reprojectionPx = 0
   state.reference.confidence = 0
   state.reference.lastSeenTimestampMs = 0
+  state.reference.lastSolvedPoseTimestampMs = 0
   state.reference.updates = 0
-  state.reference.stableFrames = 0
-  state.reference.lockSamples = []
+  clearReferenceLockTracking()
 
   if (!state.initialized) {
     state.visual.state = state.reference.ready ? 'READY' : 'BOOTSTRAP'
@@ -803,6 +878,71 @@ function averageTargetLockSamples(samples) {
     confidence: weightedConfidence / totalWeight,
     inlierCount: maxInliers,
     reprojectionPx: weightedReprojection / totalWeight,
+  }
+}
+
+function isTargetSampleConsistent(samples, estimatePose) {
+  if (!samples || !samples.length || !estimatePose) {
+    return true
+  }
+  const translationLimit = Math.max(
+    0.03,
+    Number(state.config.targetMaxStableTranslationDeltaM || 0.18)
+  )
+  const rotationLimitDeg = Math.max(
+    4,
+    Number(state.config.targetMaxStableRotationDeltaDeg || 26)
+  )
+  const latestSample = samples[samples.length - 1]
+  const translationDelta = distance3(latestSample.position, estimatePose.position)
+  if (translationDelta > translationLimit) {
+    return false
+  }
+  const rotationDelta = rotationResidualDeg(latestSample.quaternion, estimatePose.quaternion)
+  return rotationDelta <= rotationLimitDeg
+}
+
+function clearReferenceLockTracking() {
+  state.reference.stableFrames = 0
+  state.reference.lockSamples = []
+}
+
+function clearInitialReferenceLockIfNeeded() {
+  if (!state.initialized) {
+    clearReferenceLockTracking()
+  }
+}
+
+function trimReferenceLockSamples(timestampMs, stableWindowMs) {
+  state.reference.lockSamples = state.reference.lockSamples.filter((sample) => timestampMs - sample.timestampMs <= stableWindowMs)
+}
+
+function pushReferenceLockSample(timestampMs, targetEstimate, estimatePose, stableWindowMs) {
+  state.reference.lockSamples.push({
+    timestampMs: timestampMs,
+    position: estimatePose.position,
+    quaternion: estimatePose.quaternion,
+    confidence: targetEstimate.confidence,
+    inlierCount: targetEstimate.inlierCount,
+    reprojectionPx: targetEstimate.reprojectionPx,
+  })
+  trimReferenceLockSamples(timestampMs, stableWindowMs)
+}
+
+function readTargetTrackingConfig() {
+  const minTargetMatches = Math.max(1, Number(state.config.minTargetMatches || 8))
+  const trackHoldMs = Math.max(0, Number(state.config.targetTrackHoldMs || 420))
+  return {
+    freshPoseMs: Math.max(100, Number(state.config.targetFreshPoseMs || 380)),
+    trackHoldMs: trackHoldMs,
+    lostHoldMs: Math.max(trackHoldMs, Number(state.config.targetLostHoldMs || 1200)),
+    stableWindowMs: Math.max(120, Number(state.config.targetStableWindowMs || 260)),
+    stableFramesRequired: Math.max(3, Number(state.config.targetStableFrames || 4)),
+    stableMinConfidence: clamp01(Number(state.config.targetStableMinConfidence || 0.42)),
+    stableMinInliers: Math.max(4, Number(state.config.targetStableMinInliers || state.config.minTargetInliers || 6)),
+    stableMaxReprojectionPx: Math.max(1.5, Number(state.config.targetStableMaxReprojectionPx || 4.5)),
+    detectedMatchFloor: Math.max(3, minTargetMatches - 3),
+    minTargetMatches: minTargetMatches,
   }
 }
 
@@ -1285,9 +1425,9 @@ function resetState() {
   state.reference.reprojectionPx = 0
   state.reference.confidence = 0
   state.reference.lastSeenTimestampMs = 0
+  state.reference.lastSolvedPoseTimestampMs = 0
   state.reference.updates = 0
-  state.reference.stableFrames = 0
-  state.reference.lockSamples = []
+  clearReferenceLockTracking()
   state.visual.state = state.reference.ready ? 'READY' : 'BOOTSTRAP'
   state.visual.quality = 0
   state.visual.brightness = 0
@@ -1595,15 +1735,19 @@ function analyzeVisualFrame(payload) {
   state.reference.reprojectionPx = targetEstimate ? Number(targetEstimate.reprojectionPx.toFixed(3)) : 0
   state.reference.confidence = targetEstimate ? Number(targetEstimate.confidence.toFixed(3)) : 0
   const frameTimestampMs = Number(payload.timestampMs || nowMs())
-  const trackHoldMs = Math.max(0, Number(state.config.targetTrackHoldMs || 420))
-  const lostHoldMs = Math.max(trackHoldMs, Number(state.config.targetLostHoldMs || 1200))
-  const stableWindowMs = Math.max(120, Number(state.config.targetStableWindowMs || 260))
-  const stableFramesRequired = Math.max(3, Number(state.config.targetStableFrames || 4))
-  const stableMinConfidence = clamp01(Number(state.config.targetStableMinConfidence || 0.42))
-  const stableMinInliers = Math.max(4, Number(state.config.targetStableMinInliers || state.config.minTargetInliers || 6))
-  const stableMaxReprojectionPx = Math.max(1.5, Number(state.config.targetStableMaxReprojectionPx || 4.5))
-  const detectedMatchFloor = Math.max(3, Number(state.config.minTargetMatches || 8) - 3)
-  state.reference.lockSamples = state.reference.lockSamples.filter((sample) => frameTimestampMs - sample.timestampMs <= stableWindowMs)
+  const {
+    freshPoseMs,
+    trackHoldMs,
+    lostHoldMs,
+    stableWindowMs,
+    stableFramesRequired,
+    stableMinConfidence,
+    stableMinInliers,
+    stableMaxReprojectionPx,
+    detectedMatchFloor,
+    minTargetMatches,
+  } = readTargetTrackingConfig()
+  trimReferenceLockSamples(frameTimestampMs, stableWindowMs)
 
   if (targetEstimate) {
     const estimatePose = decomposePoseMatrix(targetEstimate.worldMatrix)
@@ -1611,19 +1755,15 @@ function analyzeVisualFrame(payload) {
       targetEstimate.confidence >= stableMinConfidence &&
       targetEstimate.inlierCount >= stableMinInliers &&
       targetEstimate.reprojectionPx <= stableMaxReprojectionPx
+    const stableSampleConsistent = isTargetSampleConsistent(
+      state.reference.lockSamples,
+      estimatePose
+    )
 
-    if (stableEligible) {
-      state.reference.lockSamples.push({
-        timestampMs: frameTimestampMs,
-        position: estimatePose.position,
-        quaternion: estimatePose.quaternion,
-        confidence: targetEstimate.confidence,
-        inlierCount: targetEstimate.inlierCount,
-        reprojectionPx: targetEstimate.reprojectionPx,
-      })
-      state.reference.lockSamples = state.reference.lockSamples.filter((sample) => frameTimestampMs - sample.timestampMs <= stableWindowMs)
-    } else if (!state.initialized) {
-      state.reference.lockSamples = []
+    if (stableEligible && stableSampleConsistent) {
+      pushReferenceLockSample(frameTimestampMs, targetEstimate, estimatePose, stableWindowMs)
+    } else {
+      clearInitialReferenceLockIfNeeded()
     }
 
     state.reference.stableFrames = state.reference.lockSamples.length
@@ -1642,6 +1782,7 @@ function analyzeVisualFrame(payload) {
       }
       state.reference.state = 'TRACKING'
       state.reference.lastSeenTimestampMs = frameTimestampMs
+      state.reference.lastSolvedPoseTimestampMs = frameTimestampMs
       state.reference.confidence = Number(Math.max(targetEstimate.confidence, resolvedEstimate.confidence || 0).toFixed(3))
       state.reference.updates += 1
       processMeasurement({
@@ -1660,38 +1801,48 @@ function analyzeVisualFrame(payload) {
     }
   } else if (!state.reference.ready) {
     state.reference.state = 'UNINITIALIZED'
-    state.reference.stableFrames = 0
-    state.reference.lockSamples = []
+    clearReferenceLockTracking()
+  } else if (referenceMatches.length >= Math.max(4, minTargetMatches - 2)) {
+    const freshPoseAgeMs = state.reference.lastSolvedPoseTimestampMs
+      ? frameTimestampMs - state.reference.lastSolvedPoseTimestampMs
+      : Number.POSITIVE_INFINITY
+    const poseFreshness = clamp01(1 - freshPoseAgeMs / Math.max(1, freshPoseMs))
+    state.reference.state = poseFreshness > 0.15 ? 'REACQUIRING' : 'DETECTED'
+    state.reference.confidence = Number(clamp01(
+      0.18 +
+      clamp01(referenceMatches.length / Math.max(1, minTargetMatches)) * 0.28 +
+      clamp01(quality) * 0.2 +
+      clamp01(state.visual.trackConfidence) * 0.18 +
+      poseFreshness * 0.16
+    ).toFixed(3))
+    clearInitialReferenceLockIfNeeded()
   } else if (
     state.reference.lastSeenTimestampMs &&
     frameTimestampMs - state.reference.lastSeenTimestampMs < trackHoldMs &&
     referenceMatches.length >= detectedMatchFloor
   ) {
-    state.reference.state = 'TRACKING'
+    const freshPoseAgeMs = state.reference.lastSolvedPoseTimestampMs
+      ? frameTimestampMs - state.reference.lastSolvedPoseTimestampMs
+      : Number.POSITIVE_INFINITY
+    const poseFreshness = clamp01(1 - freshPoseAgeMs / Math.max(1, freshPoseMs))
+    state.reference.state = poseFreshness > 0.15 ? 'REACQUIRING' : 'LOST'
     state.reference.confidence = Number(clamp01(
-      0.24 +
-      clamp01(referenceMatches.length / Math.max(1, Number(state.config.minTargetMatches || 8))) * 0.26 +
-      clamp01(quality) * 0.2 +
-      clamp01(state.visual.trackConfidence) * 0.16
+      0.12 +
+      clamp01(referenceMatches.length / Math.max(1, minTargetMatches)) * 0.22 +
+      clamp01(quality) * 0.16 +
+      poseFreshness * 0.14
     ).toFixed(3))
-  } else if (referenceMatches.length >= Math.max(4, Number(state.config.minTargetMatches || 8) - 2)) {
-    state.reference.state = 'DETECTED'
-    if (!state.initialized) {
-      state.reference.stableFrames = 0
-      state.reference.lockSamples = []
-    }
   } else if (state.reference.lastSeenTimestampMs && frameTimestampMs - state.reference.lastSeenTimestampMs < lostHoldMs) {
-    state.reference.state = 'LOST'
-    if (!state.initialized) {
-      state.reference.stableFrames = 0
-      state.reference.lockSamples = []
-    }
+    state.reference.state = state.reference.updates > 0 ? 'REACQUIRING' : 'LOST'
+    const lostAgeMs = frameTimestampMs - state.reference.lastSeenTimestampMs
+    state.reference.confidence = Number(clamp01(
+      Math.max(0, 0.28 - lostAgeMs / Math.max(1, lostHoldMs * 1.6))
+    ).toFixed(3))
+    clearInitialReferenceLockIfNeeded()
   } else {
     state.reference.state = 'SEARCHING'
-    if (!state.initialized) {
-      state.reference.stableFrames = 0
-      state.reference.lockSamples = []
-    }
+    state.reference.confidence = 0
+    clearInitialReferenceLockIfNeeded()
   }
   post('visual-update', {
     state: state.visual.state,

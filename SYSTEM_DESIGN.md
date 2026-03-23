@@ -1,14 +1,15 @@
 # System Design
 
-Date: 2026-03-09
+Date: 2026-03-23
 
 ## Overview
 
-The active system is a strict client-side runtime:
+The active system is a strict client-side runtime with a thin research backend:
 - WebXR provides world tracking, hit tests, anchors, camera access, and display timing.
 - The browser worker owns repo-side pose filtering, feature extraction, matching, keyframe state, relocalization scoring, and visual diagnostics.
 - The WASM module provides low-level math and vision kernels used by the worker.
-- Flask is only a static host plus status and smoke-report endpoints.
+- Flask serves static assets plus the runtime contract, research-room APIs, active-experiment state, smoke-report ingestion, and reconstruction-session history.
+- Backend persistence is limited to lab metadata and throttled session artifacts; it is not part of the tracking hot path.
 - There are no fallback tracking paths.
 
 ## Runtime Contract
@@ -51,14 +52,18 @@ flowchart LR
         P["native compositor"]
     end
 
-    subgraph Server["Flask Host"]
+    subgraph Server["Flask + Lab Support"]
         Q["static assets"]
-        R["/status"]
+        R["/status + runtime contract"]
         S["/smoke-report"]
+        T["research-room + experiment APIs"]
+        U["in-memory session store"]
+        V["lab/run artifacts"]
     end
 
     Q --> A
     R --> A
+    T --> A
     A --> B
     A --> D
     A --> E
@@ -78,6 +83,7 @@ flowchart LR
     L --> B
     B --> D
     D --> P
+    U --> V
 ```
 
 ## Session and Tracking Flow
@@ -121,10 +127,23 @@ The current browser smoke path is stronger than a pure startup test because it f
 ## Component Responsibilities
 
 ### `app.py`
-- serves the web app and vendored runtime assets
-- exposes `/status` as the architecture contract
-- exposes `/smoke-report` for browser smoke validation
-- is not part of the tracking hot path
+- creates the Flask app, registers routes, and keeps runtime constants in one place
+- exposes `/status`, research-room APIs, session APIs, and `/smoke-report`
+- wires the backend support modules together without joining the tracking hot path
+
+### `webar_backend/common.py`
+- centralizes backend logging, timestamp formatting, telemetry coercion, and summary helpers
+- keeps session summarization and runtime log formatting consistent across routes
+
+### `webar_backend/lab.py`
+- owns the `lab/` workspace contract
+- manages the research program document, active experiment payload, connection hints, and saved run artifacts
+- builds the research-room payload shared by desktop lab tooling
+
+### `webar_backend/session_store.py`
+- maintains the bounded in-memory session buffer fed by `/frontend-telemetry`
+- persists throttled session artifacts to disk so session history survives server restarts
+- lets `/api/reconstruction-sessions/<detailId>` reopen either live sessions or persisted run artifacts
 
 ### `static/js/app.js`
 - bootstraps the app and fetches the architecture contract
@@ -169,6 +188,10 @@ The current browser smoke path is stronger than a pure startup test because it f
 ### `static/index.html`
 - exposes the start flow, tracker cards, architecture section, deep info panel, and ordered log stream
 - keeps the development UI focused on proving whether the runtime contract and each subsystem are active
+
+### `static/js/session-dashboard.js`
+- renders the reconstruction-session list and detail view from the backend session APIs
+- uses stable `detailId` routing so persisted runs can still be reopened after the live in-memory buffer is gone
 
 ## Telemetry Surface
 
@@ -248,6 +271,8 @@ The current system provides:
 - repo-owned WASM vision kernels
 - vendored runtime assets
 - explicit architecture contract and browser smoke validation
+- bounded in-memory telemetry aggregation with throttled disk-backed run artifacts
+- research-room and dashboard APIs that can reopen persisted session history after a restart
 - deterministic worker sanity checks with synthetic browser-driven inputs
 - no fallback tracking modes
 

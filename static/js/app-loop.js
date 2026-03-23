@@ -1,0 +1,21 @@
+﻿Object.assign(CustomTrackerApp.prototype, {
+,
+
+,
+
+,
+
+,
+
+,
+
+,
+
+,
+
+,
+
+
+
+})
+

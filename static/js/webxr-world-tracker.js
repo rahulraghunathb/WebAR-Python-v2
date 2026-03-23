@@ -45,6 +45,14 @@ class WebXRWorldTracker {
       targetInlierRatio: 0,
       targetConfidence: 0,
       targetReprojectionPx: 0,
+      targetStableFrames: 0,
+      targetPrelockMisses: 0,
+      targetRejectReason: 'NONE',
+      targetBestInliers: 0,
+      targetRefinedInliers: 0,
+      targetRawMatchCount: 0,
+      targetReciprocalMatchCount: 0,
+      targetMatchStrategy: 'NONE',
       targetReferenceReady: false,
       targetReferenceFeatures: 0,
       referenceSpace: '-',
@@ -249,6 +257,20 @@ class WebXRWorldTracker {
         : 0
     )
     this.metrics.targetIndex = this.resolveTargetIndex(this.targetProfile)
+    const secureContext = typeof window !== 'undefined' ? Boolean(window.isSecureContext) : false
+    const protocol = typeof window !== 'undefined' && window.location ? window.location.protocol : ''
+    const userAgent = typeof navigator !== 'undefined' ? String(navigator.userAgent || '') : ''
+    const isiPhoneFamily = /iPhone|iPad|iPod/i.test(userAgent)
+    const isWebKitBrowser = /AppleWebKit/i.test(userAgent) && !/CriOS|FxiOS/i.test(userAgent)
+
+    if (!secureContext) {
+      this.metrics.supportState = 'UNAVAILABLE'
+      return {
+        supported: false,
+        reason:
+          'This page is not running in a secure context. Open it over HTTPS or localhost to access AR browser APIs.',
+      }
+    }
 
     if (typeof Worker === 'undefined') {
       this.metrics.supportState = 'UNAVAILABLE'
@@ -278,7 +300,9 @@ class WebXRWorldTracker {
       this.metrics.supportState = 'UNAVAILABLE'
       return {
         supported: false,
-        reason: 'WebXR raw camera access is required for visual ingestion.',
+        reason: isiPhoneFamily || isWebKitBrowser
+          ? 'This browser is not exposing WebXR raw camera access. On iPhone/iPad browsers, immersive WebXR is usually unavailable.'
+          : 'WebXR raw camera access is not exposed in this browser. Try a compatible AR browser over HTTPS.',
       }
     }
 
@@ -294,7 +318,11 @@ class WebXRWorldTracker {
       this.metrics.supportState = 'UNAVAILABLE'
       return {
         supported: false,
-        reason: 'WebXR is not available in this browser.',
+        reason: isiPhoneFamily || isWebKitBrowser
+          ? 'WebXR is not available in this browser. On iPhone/iPad browsers, immersive WebXR support is usually missing.'
+          : protocol === 'https:'
+            ? 'WebXR is not available in this browser.'
+            : 'WebXR is unavailable here. A secure HTTPS origin and a compatible browser are required.',
       }
     }
 
@@ -435,441 +463,6 @@ class WebXRWorldTracker {
     })
   }
 
-  async setupPoseWorker() {
-    if (this.poseWorker && this.poseWorkerReady) {
-      return
-    }
-
-    if (this.poseWorkerInitPromise) {
-      return this.poseWorkerInitPromise
-    }
-
-    const previousWorkerState = this.metrics.workerState
-    const previousWasmState = this.metrics.wasmState
-    this.metrics.workerState = 'STARTING'
-    this.metrics.wasmState = 'BOOTING'
-    if (
-      previousWorkerState !== this.metrics.workerState ||
-      previousWasmState !== this.metrics.wasmState
-    ) {
-      this.emitState()
-    }
-
-    const buildSignature =
-      document.querySelector('meta[name="webar-build"]')?.getAttribute('content') || ''
-    const workerUrl =
-      '/static/js/tracking-pose-worker.js' +
-      (buildSignature ? '?v=' + encodeURIComponent(buildSignature) : '')
-
-    this.poseWorker = new Worker(workerUrl)
-    this.poseWorkerReady = false
-
-    this.poseWorkerInitPromise = new Promise((resolve, reject) => {
-      this.poseWorkerInitResolve = resolve
-      this.poseWorkerInitReject = reject
-    })
-
-    this.poseWorkerInitTimeoutId = window.setTimeout(() => {
-      this.handlePoseWorkerFailure('Pose worker initialization timed out.')
-    }, 12000)
-
-    this.poseWorker.onmessage = (event) => {
-      const data = event.data || {}
-      if (data.type === 'ready') {
-        window.clearTimeout(this.poseWorkerInitTimeoutId)
-        this.poseWorkerInitTimeoutId = 0
-        this.poseWorkerReady = true
-        this.metrics.workerState = data.payload?.workerState || 'READY'
-        this.metrics.wasmState = data.payload?.wasmState || 'READY'
-        const resolve = this.poseWorkerInitResolve
-        this.poseWorkerInitPromise = null
-        this.poseWorkerInitResolve = null
-        this.poseWorkerInitReject = null
-        if (resolve) {
-          resolve()
-        }
-        this.emitState()
-        this.log('Pose worker ready', data.payload || {})
-        return
-      }
-      this.handlePoseWorkerMessage(event)
-    }
-
-    this.poseWorker.onerror = (event) => {
-      const message =
-        (event && event.message) || 'Pose worker crashed before producing telemetry.'
-      this.handlePoseWorkerFailure(message)
-    }
-
-    this.poseWorker.postMessage({
-      type: 'init',
-      config: {
-        referenceMaxDimension: 320,
-        targetSearchFeatures: 96,
-        targetDescriptorThreshold: 0.48,
-        targetRatioThreshold: 0.82,
-        minTargetMatches: 8,
-        minTargetInliers: 5,
-        targetInlierPx: 7,
-        targetRansacIterations: 120,
-        targetStableFrames: 3,
-        targetStableWindowMs: 260,
-        targetStableMinConfidence: 0.32,
-        targetStableMinInliers: 5,
-        targetStableMaxReprojectionPx: 6,
-      },
-    })
-
-    return this.poseWorkerInitPromise
-  }
-
-  handlePoseWorkerFailure(message) {
-    if (this.cameraPipeline && typeof this.cameraPipeline.markFrameComplete === 'function') {
-      this.cameraPipeline.markFrameComplete()
-    }
-
-    this.poseWorkerReady = false
-    this.metrics.workerState = 'ERROR'
-    this.metrics.wasmState = 'ERROR'
-    this.metrics.cameraAccessState = 'ERROR'
-    this.metrics.sessionState = 'ERROR'
-    this.log('Pose worker failure', { message })
-
-    const reject = this.poseWorkerInitReject
-    this.poseWorkerInitPromise = null
-    this.poseWorkerInitResolve = null
-    this.poseWorkerInitReject = null
-    if (reject) {
-      reject(new Error(message))
-    }
-
-    this.setState('ERROR')
-  }
-
-  destroyPoseWorker() {
-    if (this.poseWorkerInitTimeoutId) {
-      window.clearTimeout(this.poseWorkerInitTimeoutId)
-      this.poseWorkerInitTimeoutId = 0
-    }
-
-    if (this.poseWorker) {
-      this.poseWorker.terminate()
-      this.poseWorker = null
-    }
-
-    if (this.poseWorkerInitReject) {
-      this.poseWorkerInitReject(new Error('Pose worker destroyed.'))
-    }
-
-    this.poseWorkerInitPromise = null
-    this.poseWorkerInitResolve = null
-    this.poseWorkerInitReject = null
-    this.poseWorkerReady = false
-    this.metrics.workerState = 'IDLE'
-    this.metrics.wasmState = 'IDLE'
-  }
-
-  applyReferenceReady(payload) {
-    const previousTargetState = this.metrics.targetState
-    const previousReferenceReady = this.metrics.targetReferenceReady
-    this.metrics.workerState = payload.workerState || this.metrics.workerState
-    this.metrics.wasmState = payload.wasmState || this.metrics.wasmState
-    this.metrics.targetReferenceReady = payload.referenceState === 'READY'
-    this.metrics.targetReferenceFeatures = Number(payload.featureCount || 0)
-    this.metrics.targetMeasuredWidthM = Number(
-      payload.physicalWidthM || this.metrics.targetMeasuredWidthM || 0
-    )
-    this.metrics.targetName = payload.targetName || this.metrics.targetName
-    if (payload.referenceState === 'READY') {
-      this.metrics.targetState = this.session ? 'SEARCHING' : 'READY'
-    } else {
-      this.metrics.targetState = payload.referenceState || 'REFERENCE_WEAK'
-    }
-    this.metrics.anchorState = 'IMAGE_TARGET'
-    this.log('Target reference prepared', payload)
-    if (
-      previousTargetState !== this.metrics.targetState ||
-      previousReferenceReady !== this.metrics.targetReferenceReady
-    ) {
-      this.emitState()
-    }
-  }
-
-  applyPoseUpdate(payload) {
-    const previousWorldState = this.state
-    const previousTargetVisible = this.metrics.targetVisible
-    const previousPlacement = this.metrics.hasPlacement
-
-    this.metrics.workerState = payload.workerState || this.metrics.workerState
-    this.metrics.wasmState = payload.wasmState || this.metrics.wasmState
-    this.metrics.filterSource = payload.source || 'NONE'
-    this.metrics.filterConfidence = Number(payload.confidence || 0)
-    this.metrics.measurementConfidence = Number(payload.measurementConfidence || 0)
-    this.metrics.baseMeasurementConfidence = Number(payload.baseMeasurementConfidence || 0)
-    this.metrics.visualQuality = Number(payload.visualQuality || this.metrics.visualQuality || 0)
-    this.metrics.workerProcMs = Number(payload.workerProcMs || 0)
-    this.metrics.workerLatencyMs = Number(payload.workerLatencyMs || 0)
-    this.metrics.residualTranslationM = Number(payload.translationResidualM || 0)
-    this.metrics.residualRotationDeg = Number(payload.rotationResidualDeg || 0)
-    this.metrics.measurementDeltaTranslationM = this.metrics.residualTranslationM
-    this.metrics.measurementDeltaRotationDeg = this.metrics.residualRotationDeg
-    this.metrics.posAlpha = Number(payload.posAlpha || 0)
-    this.metrics.rotAlpha = Number(payload.rotAlpha || 0)
-    this.metrics.snapCount = Number(payload.snapCount || 0)
-    this.metrics.filterFrames = Number(payload.frames || 0)
-    this.metrics.speedMps = Number(payload.speedMps || 0)
-
-    if (Array.isArray(payload.matrix) && payload.matrix.length === 16) {
-      this.filteredPlacementMatrix = payload.matrix.slice(0, 16)
-    }
-
-    if (payload.hasPlacement && this.filteredPlacementMatrix) {
-      if (!this.metrics.hasPlacement) {
-        this.metrics.placementCount += 1
-      }
-      this.metrics.hasPlacement = true
-      this.metrics.targetVisible =
-        payload.source === 'image-target' ? true : this.metrics.targetVisible
-      this.metrics.targetState =
-        payload.source === 'image-target' ? 'TRACKING' : this.metrics.targetState || 'TRACKING'
-      this.metrics.anchorState = 'IMAGE_TARGET'
-      this.modelRenderer.setWorldPlacementFromMatrix(this.filteredPlacementMatrix, {
-        poseSource: String(payload.source || 'image-target').toUpperCase(),
-        confidence: this.metrics.filterConfidence,
-        translationResidualM: this.metrics.residualTranslationM,
-        rotationResidualDeg: this.metrics.residualRotationDeg,
-      })
-      this.setState('TRACKING')
-    }
-
-    if (
-      previousWorldState !== this.state ||
-      previousTargetVisible !== this.metrics.targetVisible ||
-      previousPlacement !== this.metrics.hasPlacement
-    ) {
-      this.emitState()
-    }
-  }
-
-  applyVisualUpdate(payload) {
-    const previousVisualState = this.metrics.visualState
-    const previousTargetState = this.metrics.targetState
-    const previousTargetVisible = this.metrics.targetVisible
-    const previousWorldState = this.state
-
-    if (this.cameraPipeline && typeof this.cameraPipeline.markFrameComplete === 'function') {
-      this.cameraPipeline.markFrameComplete()
-    }
-
-    this.metrics.workerState = payload.workerState || this.metrics.workerState
-    this.metrics.wasmState = payload.wasmState || this.metrics.wasmState
-    this.metrics.visualState = payload.state || this.metrics.visualState
-    this.metrics.visualQuality = Number(payload.quality || 0)
-    this.metrics.visualBrightness = Number(payload.brightness || 0)
-    this.metrics.visualContrast = Number(payload.contrast || 0)
-    this.metrics.visualMotion = Number(payload.motion || 0)
-    this.metrics.visualFeatureCount = Number(payload.featureCount || 0)
-    this.metrics.visualFeatureDensity = Number(payload.featureDensity || 0)
-    this.metrics.trackCount = Number(payload.trackCount || 0)
-    this.metrics.averageTrackAge = Number(payload.averageTrackAge || 0)
-    this.metrics.maxTrackAge = Number(payload.maxTrackAge || 0)
-    this.metrics.longTrackRatio = Number(payload.longTrackRatio || 0)
-    this.metrics.matchCount = Number(payload.matchCount || 0)
-    this.metrics.matchRatio = Number(payload.matchRatio || 0)
-    this.metrics.trackConfidence = Number(payload.trackConfidence || 0)
-    this.metrics.keyframeCount = Number(payload.keyframeCount || 0)
-    this.metrics.landmarkCount = Number(payload.landmarkCount || 0)
-    this.metrics.stableLandmarkCount = Number(payload.stableLandmarkCount || 0)
-    this.metrics.staleLandmarkCount = Number(payload.staleLandmarkCount || 0)
-    this.metrics.staleLandmarkRatio = Number(payload.staleLandmarkRatio || 0)
-    this.metrics.keyframeGrowthPerSec = Number(payload.keyframeGrowthPerSec || 0)
-    this.metrics.landmarkGrowthPerSec = Number(payload.landmarkGrowthPerSec || 0)
-    this.metrics.motionObservability = Number(payload.motionObservability || 0)
-    this.metrics.mapState = payload.mapState || this.metrics.mapState
-    this.metrics.relocalizationScore = Number(payload.relocalizationScore || 0)
-    this.metrics.relocalizationKeyframeId = Number(payload.relocalizationKeyframeId || -1)
-    this.metrics.relocalizationAttemptCount = Number(payload.relocalizationAttemptCount || 0)
-    this.metrics.relocalizationRecoveryCount = Number(payload.relocalizationRecoveryCount || 0)
-    this.metrics.lastRelocalizationDurationMs = Number(payload.lastRelocalizationDurationMs || 0)
-    this.metrics.currentRelocalizationDurationMs = Number(payload.currentRelocalizationDurationMs || 0)
-    this.metrics.motionVectorX = Number(payload.motionX || 0)
-    this.metrics.motionVectorY = Number(payload.motionY || 0)
-    this.metrics.motionScale = Number(payload.motionScale || 1)
-    this.metrics.motionRotationDeg = Number(payload.motionRotationDeg || 0)
-    this.metrics.visualOdometryConfidence = Number(payload.visualOdometryConfidence || 0)
-    this.metrics.visualFrames = Number(payload.frames || 0)
-    this.metrics.visualCaptureMs = Number(payload.captureMs || 0)
-    this.metrics.visualProcMs = Number(payload.procMs || 0)
-    this.metrics.targetMatchCount = Number(payload.targetMatchCount || 0)
-    this.metrics.targetInlierCount = Number(payload.targetInlierCount || 0)
-    this.metrics.targetInlierRatio = Number(payload.targetInlierRatio || 0)
-    this.metrics.targetConfidence = Number(payload.targetConfidence || 0)
-    this.metrics.targetReprojectionPx = Number(payload.targetReprojectionPx || 0)
-    this.metrics.targetUpdates = Number(payload.targetUpdates || 0)
-    this.metrics.targetReferenceReady = Boolean(payload.targetReferenceReady)
-    this.metrics.targetReferenceFeatures = Number(payload.targetReferenceFeatures || 0)
-    this.metrics.targetState = payload.targetState || this.metrics.targetState
-    this.metrics.targetVisible = Boolean(payload.targetVisible)
-    this.metrics.visualFrameSize =
-      payload.width && payload.height
-        ? payload.width + 'x' + payload.height
-        : this.metrics.visualFrameSize
-    this.metrics.visualSourceSize =
-      payload.sourceWidth && payload.sourceHeight
-        ? payload.sourceWidth + 'x' + payload.sourceHeight
-        : this.metrics.visualSourceSize
-
-    if (this.metrics.hasPlacement) {
-      this.setState(this.metrics.targetVisible ? 'TRACKING' : 'RELOCALIZING')
-    } else {
-      this.setState('SCANNING')
-    }
-
-    if (
-      previousVisualState !== this.metrics.visualState ||
-      previousTargetState !== this.metrics.targetState ||
-      previousTargetVisible !== this.metrics.targetVisible ||
-      previousWorldState !== this.state
-    ) {
-      this.emitState()
-    }
-  }
-
-  applyResetComplete(payload) {
-    const previousState = this.state
-    this.metrics.workerState = payload.workerState || this.metrics.workerState
-    this.metrics.wasmState = payload.wasmState || this.metrics.wasmState
-    this.metrics.hasPlacement = false
-    this.metrics.targetVisible = false
-    this.metrics.filterSource = 'NONE'
-    this.metrics.filterConfidence = 0
-    this.metrics.measurementConfidence = 0
-    this.metrics.baseMeasurementConfidence = 0
-    this.metrics.workerProcMs = 0
-    this.metrics.workerLatencyMs = 0
-    this.metrics.residualTranslationM = 0
-    this.metrics.residualRotationDeg = 0
-    this.metrics.posAlpha = 0
-    this.metrics.rotAlpha = 0
-    this.metrics.snapCount = 0
-    this.metrics.filterFrames = 0
-    this.metrics.speedMps = 0
-    this.metrics.targetState = this.metrics.targetReferenceReady
-      ? this.session
-        ? 'SEARCHING'
-        : 'READY'
-      : 'UNINITIALIZED'
-    this.metrics.anchorState = this.session ? 'IMAGE_TARGET' : 'UNAVAILABLE'
-    this.filteredPlacementMatrix = null
-    if (this.session) {
-      this.setState('SCANNING')
-    } else {
-      this.setState('IDLE')
-    }
-    if (previousState !== this.state) {
-      this.emitState()
-    }
-  }
-
-  handlePoseWorkerMessage(event) {
-    const data = event.data || {}
-    const payload = data.payload || {}
-
-    if (data.type === 'reference-ready') {
-      this.applyReferenceReady(payload)
-      return
-    }
-
-    if (data.type === 'pose-update') {
-      this.applyPoseUpdate(payload)
-      return
-    }
-
-    if (data.type === 'visual-update') {
-      this.applyVisualUpdate(payload)
-      return
-    }
-
-    if (data.type === 'reset-complete') {
-      this.applyResetComplete(payload)
-      return
-    }
-
-    if (data.type === 'config-updated') {
-      this.log('Pose worker config updated', payload.config || {})
-      return
-    }
-
-    if (data.type === 'error') {
-      const message = payload.message || 'Worker processing failed.'
-      this.handlePoseWorkerFailure(message)
-    }
-  }
-
-  postVisualFrame(capture, viewerPose) {
-    if (!this.poseWorker || !this.poseWorkerReady || !capture || !viewerPose) {
-      return false
-    }
-
-    const view = viewerPose.views && viewerPose.views[0]
-    if (!view || !view.transform || !view.projectionMatrix) {
-      return false
-    }
-
-    const payload = {
-      width: Number(capture.width || 0),
-      height: Number(capture.height || 0),
-      sourceWidth: Number(capture.sourceWidth || 0),
-      sourceHeight: Number(capture.sourceHeight || 0),
-      captureMs: Number(capture.captureMs || 0),
-      timestampMs: Number(capture.timestampMs || performance.now()),
-      sentAtMs: performance.now(),
-      cameraMatrix: Array.from(view.transform.matrix || []),
-      projectionMatrix: Array.from(view.projectionMatrix || []),
-      pixels: capture.pixels,
-    }
-
-    this.poseWorker.postMessage({ type: 'visual-frame', payload }, [capture.pixels])
-    return true
-  }
-
-  resetPlacement() {
-    this.filteredPlacementMatrix = null
-    this.metrics.hasPlacement = false
-    this.metrics.targetVisible = false
-    this.metrics.targetState = this.metrics.targetReferenceReady
-      ? this.session
-        ? 'SEARCHING'
-        : 'READY'
-      : 'UNINITIALIZED'
-    this.metrics.filterSource = 'NONE'
-    this.metrics.filterConfidence = 0
-    this.metrics.measurementConfidence = 0
-    this.metrics.baseMeasurementConfidence = 0
-    this.metrics.workerProcMs = 0
-    this.metrics.workerLatencyMs = 0
-    this.metrics.residualTranslationM = 0
-    this.metrics.residualRotationDeg = 0
-    this.metrics.posAlpha = 0
-    this.metrics.rotAlpha = 0
-    this.metrics.snapCount = 0
-    this.metrics.filterFrames = 0
-    this.metrics.speedMps = 0
-    this.modelRenderer.clearWorldPlacement()
-
-    if (this.poseWorker && this.poseWorkerReady) {
-      this.poseWorker.postMessage({ type: 'reset' })
-    }
-
-    if (this.session) {
-      this.setState('SCANNING')
-    } else {
-      this.setState('IDLE')
-    }
-    this.emitState()
-    this.log('Target lock reset')
-  }
-
   async start() {
     if (this.session) {
       return
@@ -983,190 +576,6 @@ class WebXRWorldTracker {
     this.handleSessionEnd()
   }
 
-  handleVisibilityChange() {
-    this.metrics.visibilityState = document.visibilityState || 'hidden'
-    this.emitState()
-  }
-
-  onXRFrame(time, frame) {
-    if (!frame) {
-      return
-    }
-
-    if (!this.referenceSpace) {
-      const rendererReferenceSpace =
-        this.renderer &&
-        this.renderer.xr &&
-        typeof this.renderer.xr.getReferenceSpace === 'function'
-          ? this.renderer.xr.getReferenceSpace()
-          : null
-      if (rendererReferenceSpace) {
-        this.referenceSpace = rendererReferenceSpace
-        this.metrics.referenceSpace = 'renderer-default'
-        this.log('Using renderer-managed XR reference space')
-        this.emitState()
-      }
-    }
-
-    const frameStartedAt = performance.now()
-    if (!this.referenceSpace) {
-      this.metrics.hitTestState = 'NO_REF_SPACE'
-      this.modelRenderer.render()
-      this.metrics.localLatencyMs = Number((performance.now() - frameStartedAt).toFixed(3))
-      return
-    }
-    const deltaMs = this.lastFrameTime ? Math.max(1, time - this.lastFrameTime) : 16.7
-    this.lastFrameTime = time
-    this.metrics.frameTimeMs = Number(deltaMs.toFixed(2))
-    this.frameCount += 1
-
-    const now = performance.now()
-    if (!this.lastFpsSampleTime) {
-      this.lastFpsSampleTime = now
-    } else if (now - this.lastFpsSampleTime >= 1000) {
-      this.metrics.xrFps = Math.round((this.frameCount * 1000) / (now - this.lastFpsSampleTime))
-      this.frameCount = 0
-      this.lastFpsSampleTime = now
-    }
-
-    this.modelRenderer.markWorldFrame(deltaMs)
-
-    const viewerPose = frame.getViewerPose(this.referenceSpace)
-    if (!viewerPose || !viewerPose.views || !viewerPose.views.length) {
-      this.metrics.hitTestState = 'NO_POSE'
-      if (!this.metrics.hasPlacement) {
-        this.setState('SCANNING')
-      }
-      this.modelRenderer.render()
-      this.metrics.localLatencyMs = Number((performance.now() - frameStartedAt).toFixed(3))
-      return
-    }
-
-    this.metrics.hitTestState = 'DISABLED'
-    this.updateViewport(viewerPose.views[0])
-    this.captureVisualFrame(frame, viewerPose)
-    this.modelRenderer.render()
-    this.metrics.localLatencyMs = Number((performance.now() - frameStartedAt).toFixed(3))
-  }
-
-  captureVisualFrame(frame, viewerPose) {
-    if (!this.cameraPipeline || !this.poseWorkerReady) {
-      return
-    }
-
-    const capture = this.cameraPipeline.captureFrame(frame, viewerPose)
-    this.syncCameraDiagnostics()
-    if (!capture) {
-      return
-    }
-
-    const posted = this.postVisualFrame(capture, viewerPose)
-    if (posted) {
-      this.cameraPipeline.markFrameSubmitted()
-    } else {
-      this.cameraPipeline.markFrameComplete()
-    }
-    this.syncCameraDiagnostics()
-  }
-
-  updateViewport(view) {
-    const rect = this.viewportStage
-      ? this.viewportStage.getBoundingClientRect()
-      : { width: window.innerWidth, height: window.innerHeight }
-    const width = Math.max(1, Math.round(rect.width || window.innerWidth))
-    const height = Math.max(1, Math.round(rect.height || window.innerHeight))
-    const sourceWidth = Number((view && view.camera && view.camera.width) || 0)
-    const sourceHeight = Number((view && view.camera && view.camera.height) || 0)
-
-    this.metrics.viewport = width + 'x' + height
-    this.modelRenderer.resize(width, height, {
-      sourceWidth,
-      sourceHeight,
-      fitMode: 'cover',
-    })
-  }
-
-  handleSessionEnd() {
-    if (this.session) {
-      this.session.removeEventListener('end', this.boundSessionEnd)
-    }
-    document.removeEventListener('visibilitychange', this.boundVisibilityChange)
-
-    if (this.renderer) {
-      this.renderer.setAnimationLoop(null)
-      this.renderer.xr.enabled = false
-    }
-
-    if (this.cameraPipeline) {
-      this.cameraPipeline.stop()
-      this.syncCameraDiagnostics()
-    }
-
-    this.referenceSpace = null
-    this.session = null
-    this.lastFrameTime = 0
-    this.lastFpsSampleTime = 0
-    this.frameCount = 0
-    this.filteredPlacementMatrix = null
-    this.clearLatestHit()
-
-    if (this.targetImageBitmap && typeof this.targetImageBitmap.close === 'function') {
-      this.targetImageBitmap.close()
-    }
-    this.targetImageBitmap = null
-
-    this.modelRenderer.setXRSessionActive(false)
-    this.modelRenderer.resetPose()
-    this.destroyPoseWorker()
-
-    this.metrics.sessionState = 'ENDED'
-    this.metrics.visibilityState = 'hidden'
-    this.metrics.targetState = 'IDLE'
-    this.metrics.targetVisible = false
-    this.metrics.targetUpdates = 0
-    this.metrics.targetMatchCount = 0
-    this.metrics.targetInlierCount = 0
-    this.metrics.targetConfidence = 0
-    this.metrics.targetReprojectionPx = 0
-    this.metrics.targetReferenceReady = false
-    this.metrics.targetReferenceFeatures = 0
-    this.metrics.targetIndex = -1
-    this.metrics.hasPlacement = false
-    this.metrics.anchorState = 'UNAVAILABLE'
-    this.metrics.cameraAccessState = 'IDLE'
-    this.metrics.visualState = 'IDLE'
-    this.metrics.visualFrames = 0
-    this.metrics.visualQuality = 0
-    this.metrics.visualFeatureCount = 0
-    this.metrics.trackCount = 0
-    this.metrics.matchCount = 0
-    this.metrics.keyframeCount = 0
-    this.metrics.landmarkCount = 0
-    this.metrics.mapState = 'BOOTSTRAP'
-    this.metrics.relocalizationScore = 0
-    this.metrics.filterSource = 'NONE'
-    this.metrics.filterConfidence = 0
-    this.metrics.measurementConfidence = 0
-    this.metrics.baseMeasurementConfidence = 0
-    this.metrics.workerProcMs = 0
-    this.metrics.workerLatencyMs = 0
-    this.metrics.residualTranslationM = 0
-    this.metrics.residualRotationDeg = 0
-    this.metrics.posAlpha = 0
-    this.metrics.rotAlpha = 0
-    this.metrics.snapCount = 0
-    this.metrics.filterFrames = 0
-    this.metrics.speedMps = 0
-    this.metrics.framebufferScale = 1
-    this.metrics.xrFps = 0
-    this.metrics.viewport = '-'
-    this.metrics.referenceSpace = '-'
-    this.metrics.localLatencyMs = 0
-
-    this.setState('ENDED')
-    this.log('XR session ended')
-  }
-
   getDiagnostics() {
     this.syncCameraDiagnostics()
     return {
@@ -1179,11 +588,3 @@ class WebXRWorldTracker {
 }
 
 window.WebXRWorldTracker = WebXRWorldTracker
-
-
-
-
-
-
-
-

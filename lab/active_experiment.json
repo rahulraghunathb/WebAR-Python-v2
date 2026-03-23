@@ -1,0 +1,10 @@
+{
+  "experimentId": "exp-reciprocal-fallback-v11",
+  "hypothesis": "If we prefer reciprocal matches when they are healthy but fall back to the fuller forward match set when reciprocity is too sparse, we should preserve usable correspondences while still exposing the real solver reject stage.",
+  "targetId": "ranger-poster",
+  "presetId": "reciprocal-fallback-v11",
+  "deviceLabel": "mobile-phone",
+  "runTag": "reciprocal-fallback-v11",
+  "operatorNote": "Start 35 to 55 cm away with the full poster visible, keep the whole image sharp in frame, move in slowly, and when DETECTED appears hold very still for 1 to 2 seconds so the matcher can compare reciprocal and forward correspondence pools cleanly.",
+  "successCriteria": "Recover non-zero target inliers or, failing that, surface a clear reject reason together with raw-versus-reciprocal match counts so the next patch can target the exact bottleneck."
+}

@@ -303,6 +303,10 @@
         font-size: 12px;
         text-align: center;
       }
+      .start-footnote a {
+        color: #8fdcff;
+        text-decoration: none;
+      }
       .log-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
       .log-actions { display: flex; gap: 8px; }
       .log-btn { border: none; border-radius: 999px; padding: 7px 12px; background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
@@ -362,6 +366,7 @@
         <button class="reset-btn" id="resetBtn">Reset Target Lock</button>
       </div>
       <div class="shortcut-links">
+        <a href="/research-room" class="dashboard-link">Research Room</a>
         <a href="/static/alignment-tool/index.html" class="alignment-link">Alignment</a>
         <a href="/reconstruction-dashboard" class="dashboard-link">Sessions</a>
         <a href="/camera-diagnostics" class="diagnostics-link">Camera Test</a>
@@ -488,7 +493,7 @@
             <div class="permission-item" id="permSession">Target Tracking Pipeline Not Started</div>
           </div>
           <button class="start-btn" id="startBtn" disabled>Start AR</button>
-          <div class="start-footnote">One image target, one 3D overlay, and a cleaner launch flow.</div>
+          <div class="start-footnote">Desktop lab: <a href="/research-room">open the experimental room</a>. Mobile AR needs a secure HTTPS origin and a browser that exposes WebXR.</div>
         </div>
       </div>
     </div>

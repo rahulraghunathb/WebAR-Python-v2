@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="webar-build" content="{{ build_signature }}" />
+    <title>WebAR Research Room</title>
+    <style>
+      :root {
+        --bg-0: #040d10;
+        --bg-1: #09171c;
+        --panel: rgba(7, 15, 18, 0.88);
+        --line: rgba(255, 255, 255, 0.08);
+        --line-strong: rgba(255, 255, 255, 0.14);
+        --text: #eff7f5;
+        --muted: #8fa8a7;
+        --accent: #00d98a;
+        --accent-2: #56b5ff;
+        --warn: #f5c451;
+        --danger: #ff6f6f;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: 'Segoe UI', Roboto, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(0, 217, 138, 0.18), transparent 28%),
+          radial-gradient(circle at top right, rgba(86, 181, 255, 0.16), transparent 26%),
+          linear-gradient(180deg, var(--bg-1) 0%, #020608 56%, #010304 100%);
+      }
+      a { color: inherit; }
+      button, input, textarea { font: inherit; }
+      .page {
+        min-height: 100vh;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        align-items: flex-start;
+      }
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-weight: 800;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: clamp(30px, 4vw, 48px);
+        line-height: 0.95;
+      }
+      .header p {
+        margin: 10px 0 0;
+        max-width: 760px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .header-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .action-link,
+      .action-btn {
+        border: 1px solid var(--line-strong);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        text-decoration: none;
+        border-radius: 999px;
+        padding: 11px 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .action-link:hover,
+      .action-btn:hover {
+        border-color: rgba(0, 217, 138, 0.5);
+        background: rgba(0, 217, 138, 0.12);
+      }
+      .live-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line-strong);
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .live-toggle input { accent-color: var(--accent); }
+      .layout {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 18px;
+        min-height: 0;
+      }
+      .stack {
+        display: grid;
+        gap: 18px;
+        min-height: 0;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(18px);
+        padding: 18px;
+      }
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: baseline;
+        margin-bottom: 14px;
+      }
+      .panel-head h2,
+      .panel-head h3 {
+        margin: 0;
+        font-size: 20px;
+      }
+      .panel-sub {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .url-list,
+      .step-list,
+      .meta-list,
+      .session-list {
+        display: grid;
+        gap: 10px;
+      }
+      .url-card,
+      .meta-card,
+      .session-card {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.04);
+        padding: 14px;
+      }
+      .url-top,
+      .session-top,
+      .session-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .url-label,
+      .meta-label,
+      .session-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+        font-weight: 700;
+      }
+      .url-value,
+      .meta-value,
+      .session-value {
+        margin-top: 8px;
+        font-weight: 700;
+        word-break: break-all;
+      }
+      .copy-btn,
+      .save-btn {
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        cursor: pointer;
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .copy-btn:hover,
+      .save-btn:hover {
+        border-color: rgba(0, 217, 138, 0.5);
+      }
+      .step-list {
+        margin-top: 12px;
+        padding-left: 18px;
+        color: var(--muted);
+      }
+      .step-list li {
+        line-height: 1.5;
+      }
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .status-pill.good { background: rgba(0, 217, 138, 0.16); color: #89ffca; }
+      .status-pill.warn { background: rgba(245, 196, 81, 0.16); color: #ffe08f; }
+      .status-pill.bad { background: rgba(255, 111, 111, 0.16); color: #ffb2b2; }
+      .status-pill.idle { background: rgba(255, 255, 255, 0.08); color: #dde8e6; }
+      form {
+        display: grid;
+        gap: 12px;
+      }
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      input,
+      textarea {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid var(--line-strong);
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        padding: 12px 14px;
+      }
+      textarea {
+        min-height: 84px;
+        resize: vertical;
+      }
+      .program-card pre {
+        margin: 0;
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--line);
+        white-space: pre-wrap;
+        line-height: 1.55;
+        color: #d7ece8;
+      }
+      .note {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 18px;
+        border-radius: 18px;
+        border: 1px dashed var(--line-strong);
+        text-align: center;
+      }
+      @media (max-width: 1100px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 720px) {
+        .page {
+          padding: 16px;
+        }
+        .field-grid,
+        .meta-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div>
+          <div class="eyebrow">Research Room</div>
+          <h1>Phone-Test Experimental Room</h1>
+          <p>Use this page as the desktop control surface. It exposes same-network phone URLs, the active experiment preset, the current research program, and the latest session telemetry for each mobile run.</p>
+        </div>
+        <div class="header-actions">
+          <a class="action-link" href="/" target="_blank" rel="noreferrer">Open Runtime</a>
+          <a class="action-link" href="/static/alignment-tool/index.html?target=ranger-poster" target="_blank" rel="noreferrer">Alignment</a>
+          <a class="action-link" href="/reconstruction-dashboard" target="_blank" rel="noreferrer">Open Dashboard</a>
+          <a class="action-link" href="/camera-diagnostics" target="_blank" rel="noreferrer">Camera Test</a>
+          <button class="action-btn" id="refreshBtn" type="button">Refresh</button>
+          <label class="live-toggle"><input id="autoRefresh" type="checkbox" checked /> Live Updates</label>
+        </div>
+      </header>
+
+      <main class="layout">
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Phone Connection</h2>
+                <div class="panel-sub">Use one of these same-network URLs on the phone. The runtime URL is the one the phone should open.</div>
+              </div>
+              <div class="status-pill idle" id="serverStatus">Waiting</div>
+            </div>
+            <div class="url-list" id="connectionList"></div>
+            <ol class="step-list">
+              <li>Keep desktop and phone on the same Wi-Fi network.</li>
+              <li>Open the runtime URL on the phone and allow camera permissions.</li>
+              <li>Run one target-lock experiment, then return here to compare the newest session.</li>
+            </ol>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Latest Run</h2>
+                <div class="panel-sub">Newest telemetry session from the AR runtime.</div>
+              </div>
+            </div>
+            <div class="meta-grid" id="latestRunGrid"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Recent Mobile Runs</h2>
+                <div class="panel-sub">Newest-first session list for fast compare-and-iterate work.</div>
+              </div>
+            </div>
+            <div class="session-list" id="recentSessions"></div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Active Experiment</h2>
+                <div class="panel-sub">These values are attached to each new telemetry run.</div>
+              </div>
+              <button class="save-btn" id="saveExperimentBtn" type="button">Save Preset</button>
+            </div>
+            <form id="experimentForm">
+              <div class="field-grid">
+                <label>Experiment Id<input id="experimentId" name="experimentId" type="text" /></label>
+                <label>Target Id<input id="targetId" name="targetId" type="text" /></label>
+                <label>Preset Id<input id="presetId" name="presetId" type="text" /></label>
+                <label>Device Label<input id="deviceLabel" name="deviceLabel" type="text" /></label>
+                <label>Run Tag<input id="runTag" name="runTag" type="text" /></label>
+                <label>Success Criteria<input id="successCriteria" name="successCriteria" type="text" /></label>
+              </div>
+              <label>Hypothesis<textarea id="hypothesis" name="hypothesis"></textarea></label>
+              <label>Operator Note<textarea id="operatorNote" name="operatorNote"></textarea></label>
+            </form>
+            <div class="note" id="saveStatus">Edit the active preset here. The AR runtime reads it on load and attaches it to telemetry events.</div>
+          </section>
+
+          <section class="panel program-card">
+            <div class="panel-head">
+              <div>
+                <h2>Research Program</h2>
+                <div class="panel-sub" id="programMeta">Loading program...</div>
+              </div>
+            </div>
+            <pre id="programText">Loading program...</pre>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="/static/js/research-room.js?v={{ build_signature }}"></script>
+  </body>
+</html>

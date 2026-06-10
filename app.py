@@ -1,38 +1,38 @@
 import base64
+import logging
 import os
-import time
 import threading
-from collections import deque
+import time
 
 import cv2
 import numpy as np
-from flask import Flask, render_template, jsonify
+from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, emit
 
 from src.detectors import ORBDetector
 from src.matchers import BFMatcher
 from src.processor import ImageProcessor
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("webar")
+
 # Initialize Flask app
 app = Flask(__name__, static_folder="static", template_folder="static")
-app.config["SECRET_KEY"] = "target-detection-secret-key"
+app.config["SECRET_KEY"] = os.environ.get("WEBAR_SECRET_KEY", "dev-secret-change-me")
 
-# Use standard threading for better compatibility with ThreadPoolExecutor
-# Force 'threading' to avoid eventlet conflicts
+# Use standard threading (eventlet is unused/deprecated with this mode)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-# Single-worker frame queue (latest frame wins)
-frame_queue = deque(maxlen=1)
-frame_event = threading.Event()
-queue_lock = threading.Lock()
-last_processed_id = 0
-last_received_id = 0
-queue_drop_count = 0
-
-# Create processor
+# Base processor holds the (read-only) target data. Each connected client
+# gets a session copy with its own pose-solver state machine so concurrent
+# clients cannot corrupt each other's tracking (the old code shared one
+# global solver AND broadcast results to every client).
 detector = ORBDetector(n_features=800, scale_factor=1.2, n_levels=8)
 matcher = BFMatcher(ratio_threshold=0.8, min_matches=8)
-processor = ImageProcessor(detector=detector, matcher=matcher)
+base_processor = ImageProcessor(detector=detector, matcher=matcher)
 
 DEFAULT_TARGET_PATH = os.path.join(
     os.path.dirname(__file__), "static", "assets", "ranger-base-image.jpg"
@@ -43,16 +43,16 @@ def load_default_target():
     # Try loading preprocessed blob first
     blob_path = DEFAULT_TARGET_PATH.replace(".jpg", ".webarimg")
     if os.path.exists(blob_path):
-        if processor.load_target_blob(blob_path):
-            print(f"✓ Preprocessed target loaded: {blob_path}")
+        if base_processor.load_target_blob(blob_path):
+            log.info("Preprocessed target loaded: %s", blob_path)
             return True
 
     # Fallback to standard image loading
     if os.path.exists(DEFAULT_TARGET_PATH):
         target_image = cv2.imread(DEFAULT_TARGET_PATH, cv2.IMREAD_COLOR)
         if target_image is not None:
-            processor.set_target(target_image)
-            print(f"✓ Target image loaded (runtime extraction): {DEFAULT_TARGET_PATH}")
+            base_processor.set_target(target_image)
+            log.info("Target image loaded (runtime extraction): %s", DEFAULT_TARGET_PATH)
             return True
     return False
 
@@ -60,16 +60,38 @@ def load_default_target():
 load_default_target()
 
 
+class ClientSession:
+    """Per-client tracking state."""
+
+    def __init__(self, sid: str):
+        self.sid = sid
+        self.processor = base_processor.create_session_copy()
+        self.last_processed_id = 0
+        self.last_received_id = 0
+        self.drop_count = 0
+
+
+# sid -> ClientSession
+sessions = {}
+# sid -> (data, frame_id): latest pending frame per client (newest wins)
+pending_frames = {}
+state_lock = threading.Lock()
+frame_event = threading.Event()
+
+
 def frame_worker():
+    """Single worker: processes the newest pending frame per client."""
     while True:
         frame_event.wait()
         while True:
-            with queue_lock:
-                if not frame_queue:
+            with state_lock:
+                if not pending_frames:
                     frame_event.clear()
                     break
-                data, frame_id = frame_queue.pop()
-            process_frame(data, frame_id)
+                sid, (data, frame_id) = pending_frames.popitem()
+                session = sessions.get(sid)
+            if session is not None:
+                process_frame(session, data, frame_id)
 
 
 threading.Thread(target=frame_worker, daemon=True).start()
@@ -82,51 +104,65 @@ def index():
 
 @app.route("/status")
 def status():
-    return jsonify(processor.get_target_info())
+    return jsonify(base_processor.get_target_info())
 
 
 @socketio.on("connect")
 def handle_connect():
-    print("Client connected")
-    info = processor.get_target_info()
+    sid = request.sid
+    with state_lock:
+        sessions[sid] = ClientSession(sid)
+    log.info("Client connected: %s", sid)
+
+    info = base_processor.get_target_info()
     emit(
         "status",
         {
             "connected": True,
-            "ready": processor.is_ready(),
+            "ready": base_processor.is_ready(),
             "keypoints": info.get("keypoints_count", 0) if info.get("ready") else 0,
         },
     )
 
 
+@socketio.on("disconnect")
+def handle_disconnect():
+    sid = request.sid
+    with state_lock:
+        sessions.pop(sid, None)
+        pending_frames.pop(sid, None)
+    log.info("Client disconnected: %s", sid)
+
+
 @socketio.on("frame")
 def handle_frame(data):
-    global last_processed_id, last_received_id, queue_drop_count
+    sid = request.sid
 
     # Handle both dict and raw data
     frame_id = data.get("id", 0) if isinstance(data, dict) else 0
+    frame_id = frame_id or 0
 
-    if frame_id > 0 and frame_id <= last_processed_id:
-        return
-    with queue_lock:
-        if frame_id > 0 and frame_id <= last_received_id:
+    with state_lock:
+        session = sessions.get(sid)
+        if session is None:
             return
-        if len(frame_queue) == frame_queue.maxlen:
-            queue_drop_count += 1
-        frame_queue.append((data, frame_id))
+        if frame_id > 0 and frame_id <= session.last_received_id:
+            return  # Stale (out-of-order) frame
+        if sid in pending_frames:
+            session.drop_count += 1  # Overwriting an unprocessed frame
+        pending_frames[sid] = (data, frame_id)
         if frame_id > 0:
-            last_received_id = frame_id
+            session.last_received_id = frame_id
     frame_event.set()
 
 
-def process_frame(data, frame_id):
-    global last_processed_id, queue_drop_count
-
-    if frame_id > 0 and frame_id < last_processed_id:
+def process_frame(session: ClientSession, data, frame_id):
+    if frame_id > 0 and frame_id < session.last_processed_id:
         return
 
     try:
         start_time = time.time()
+        processor = session.processor
 
         # Extract image data
         if isinstance(data, dict):
@@ -140,19 +176,21 @@ def process_frame(data, frame_id):
             return
 
         if "," in encoded_data:
-            header, encoded = encoded_data.split(",", 1)
+            _, encoded = encoded_data.split(",", 1)
         else:
             encoded = encoded_data
 
         nparr = np.frombuffer(base64.b64decode(encoded), np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Decode straight to grayscale: ORB only needs luminance and this
+        # skips a per-frame BGR->gray conversion.
+        frame = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
         if frame is None:
             return
 
         h, w = frame.shape[:2]
 
         if intrinsics and intrinsics.get("fx"):
-            processor._pose_solver.set_camera_intrinsics(
+            processor.set_camera_intrinsics(
                 fx=intrinsics["fx"],
                 fy=intrinsics["fy"],
                 cx=intrinsics.get("cx", w / 2),
@@ -168,36 +206,39 @@ def process_frame(data, frame_id):
             "debug": {
                 **processor.get_debug_info(),
                 "confidence": confidence,
-                "queue_drops": queue_drop_count,
+                "queue_drops": session.drop_count,
                 "proc_ms": int((time.time() - start_time) * 1000),
             },
         }
 
         if detected and corners is not None and inlier_src is not None:
             result["corners"] = corners.reshape(-1, 2).tolist()
-            object_points = processor._map_2d_to_3d(inlier_src.reshape(-1, 2))
-            image_points = inlier_dst.reshape(-1, 2)
 
-            # Fix: PoseSolver uses 'compute_pose_ransac' instead of 'solve'
-            pose = processor._pose_solver.compute_pose_ransac(
-                object_points, image_points, w, h
-            )
+            pose = processor.estimate_pose(inlier_src, inlier_dst, w, h)
             if pose:
+                # Frame id rides along with the pose so the frontend can match
+                # it to the IMU snapshot taken when this frame was captured.
+                pose["id"] = frame_id
                 result["pose"] = pose
                 result["debug"]["tracking_state"] = pose.get("state")
                 result["debug"]["tracking_confidence"] = pose.get("confidence")
+        else:
+            # CRITICAL: drive the tracking state machine on misses too,
+            # otherwise a stale pose prior survives forever and poisons
+            # re-acquisition when the target reappears.
+            processor.notify_no_detection()
 
         if frame_id > 0:
-            last_processed_id = frame_id
-        socketio.emit("result", result)
+            session.last_processed_id = frame_id
+
+        # Emit only to the client that sent the frame (never broadcast).
+        socketio.emit("result", result, to=session.sid)
 
         if detected:
-            print(f"[{frame_id}] DETECTED - {result['debug']['proc_ms']}ms")
-        elif frame_id % 10 == 0:
-            print(f"[{frame_id}] NO_DETECTION - {result['debug']['proc_ms']}ms")
+            log.debug("[%s] DETECTED - %dms", frame_id, result["debug"]["proc_ms"])
 
-    except Exception as e:
-        print(f"Async Error: {e}")
+    except Exception:
+        log.exception("Frame processing error")
 
 
 if __name__ == "__main__":

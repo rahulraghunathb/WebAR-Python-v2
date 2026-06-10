@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebAR SDK - Pipeline Verification</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    h1 { font-size: 18px; }
+    .pass { color: #0f0; }
+    .fail { color: #f44; }
+    .info { color: #888; }
+    #frames { display: flex; gap: 10px; margin-top: 12px; }
+    canvas { border: 1px solid #333; }
+    #log div { padding: 2px 0; }
+  </style>
+</head>
+<body>
+  <h1>WebAR SDK — Vision Pipeline Verification (no camera needed)</h1>
+  <p class="info">Feeds synthetic warped-target frames through the real worker + WASM pipeline.</p>
+  <div id="log"><div class="info">Loading…</div></div>
+  <div id="frames">
+    <canvas id="frameCanvas" width="480" height="360"></canvas>
+  </div>
+
+  <script>
+    const logEl = document.getElementById('log')
+    logEl.innerHTML = ''
+    const results = []
+    const checks = []
+
+    function log(cls, msg) {
+      const d = document.createElement('div')
+      d.className = cls
+      d.textContent = msg
+      logEl.appendChild(d)
+      console.log(`[TEST:${cls}] ${msg}`)
+    }
+    function check(name, cond, detail) {
+      checks.push({ name, pass: !!cond })
+      log(cond ? 'pass' : 'fail', `${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  (' + detail + ')' : ''}`)
+    }
+
+    const W = 480, H = 360
+    const canvas = document.getElementById('frameCanvas')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+
+    // Pinhole intrinsics for a 60° horizontal FOV at 480px
+    const FX = W / (2 * Math.tan(Math.PI / 6))
+    const INTRINSICS = { fx: FX, fy: FX, cx: W / 2, cy: H / 2 }
+
+    /** Draw the target with an affine warp into the frame canvas. */
+    function renderFrame(target, t) {
+      // Slow drift: translate + rotate + slight scale change over time
+      const dx = t * 1.0
+      const dy = t * 0.4
+      const angle = (t * 0.25) * Math.PI / 180
+      const s = (160 / target.height) * (1 + t * 0.001)
+
+      ctx.fillStyle = '#3a3a3a'
+      ctx.fillRect(0, 0, W, H)
+      // A couple of distractor shapes so detection isn't trivially clean
+      ctx.fillStyle = '#555'
+      ctx.fillRect(10, 10, 60, 40)
+      ctx.beginPath(); ctx.arc(430, 320, 25, 0, 7); ctx.fillStyle = '#666'; ctx.fill()
+
+      ctx.save()
+      ctx.translate(W / 2 + dx - 20, H / 2 + dy - 10)
+      ctx.rotate(angle)
+      ctx.scale(s, s)
+      ctx.drawImage(target, -target.width / 2, -target.height / 2)
+      ctx.restore()
+
+      return ctx.getImageData(0, 0, W, H)
+    }
+
+    async function main() {
+      const t0 = performance.now()
+
+      // 1. Load target
+      const img = new Image()
+      img.src = '/static/assets/ranger-base-image.jpg'
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej })
+      const tCanvas = document.createElement('canvas')
+      tCanvas.width = img.width; tCanvas.height = img.height
+      tCanvas.getContext('2d').drawImage(img, 0, 0)
+      const targetData = tCanvas.getContext('2d').getImageData(0, 0, img.width, img.height)
+      log('info', `Target loaded: ${img.width}x${img.height}`)
+
+      // 2. Boot the real worker
+      const worker = new Worker('/static/sdk/vision/vision-worker.js')
+      const pending = new Map()
+      let readyInfo = null
+
+      worker.onmessage = (e) => {
+        const msg = e.data
+        if (msg.type === 'ready') { pending.get('ready')(msg.info); return }
+        if (msg.type === 'error') {
+          log('fail', 'WORKER ERROR: ' + msg.message)
+          const p = pending.get(msg.id !== undefined ? msg.id : 'ready')
+          if (p) p(null)
+          return
+        }
+        if (msg.type === 'result') {
+          const p = pending.get(msg.id)
+          if (p) { pending.delete(msg.id); p(msg) }
+        }
+      }
+      worker.onerror = (e) => log('fail', 'WORKER CRASH: ' + e.message)
+
+      readyInfo = await new Promise((res) => {
+        pending.set('ready', res)
+        worker.postMessage({ type: 'init', target: targetData }, [targetData.data.buffer])
+      })
+      const initMs = Math.round(performance.now() - t0)
+      check('Engine init + target compile', readyInfo && readyInfo.ready,
+        `${initMs}ms, keypoints=${readyInfo ? JSON.stringify(readyInfo.keypoints) : '-'}`)
+      if (!readyInfo) return finish()
+
+      // 3. Feed frames sequentially (deterministic)
+      const N = 40
+      for (let t = 0; t < N; t++) {
+        const frame = renderFrame(img, t)
+        const r = await new Promise((res) => {
+          pending.set(t + 1, res)
+          worker.postMessage(
+            { type: 'frame', imageData: frame, id: t + 1, intrinsics: INTRINSICS },
+            [frame.data.buffer]
+          )
+        })
+        results.push(r)
+      }
+
+      // 4. Assertions
+      const detected = results.filter(r => r && r.detected)
+      const trackFrames = results.filter(r => r && r.debug && r.debug.mode === 'track')
+      const procTimes = results.map(r => (r && r.debug && r.debug.proc_ms) || 0).sort((a, b) => a - b)
+      const median = procTimes[Math.floor(procTimes.length / 2)]
+
+      check('First-frame acquisition', results[0] && results[0].detected,
+        results[0] && results[0].debug ? `inliers=${results[0].debug.inliers}` : 'no result')
+      check('Detection rate >= 90%', detected.length >= N * 0.9, `${detected.length}/${N}`)
+      check('KLT tracking engaged (>= 60% of frames)', trackFrames.length >= N * 0.6,
+        `${trackFrames.length}/${N} track-mode frames`)
+
+      const withPose = detected.filter(r => r.pose)
+      check('Poses produced for detections', withPose.length === detected.length,
+        `${withPose.length}/${detected.length}`)
+
+      if (withPose.length) {
+        const finite = withPose.every(r => r.pose.matrix.every(v => isFinite(v)))
+        check('All pose matrices finite', finite)
+
+        const dists = withPose.map(r => r.pose.distance)
+        const dOK = dists.every(d => d > 0.2 && d < 8)
+        check('Distances plausible (0.2-8m)', dOK,
+          `min=${Math.min(...dists).toFixed(2)} max=${Math.max(...dists).toFixed(2)}`)
+
+        const reprojs = withPose.map(r => r.pose.reproj_error)
+        const rOK = reprojs.every(e => e < 5.0)
+        check('Reprojection errors < 5px', rOK,
+          `max=${Math.max(...reprojs).toFixed(2)}px`)
+
+        // Distance stability: smooth synthetic motion -> pose must not jump
+        let maxJump = 0
+        for (let i = 1; i < withPose.length; i++) {
+          maxJump = Math.max(maxJump, Math.abs(withPose[i].pose.distance - withPose[i - 1].pose.distance))
+        }
+        check('Frame-to-frame distance jumps < 0.15m', maxJump < 0.15, `max jump=${maxJump.toFixed(3)}m`)
+
+        // Corners must drift right, matching the synthetic +x translation
+        const first = withPose[0], last = withPose[withPose.length - 1]
+        if (first.corners && last.corners) {
+          const cx0 = first.corners.reduce((s, c) => s + c[0], 0) / 4
+          const cx1 = last.corners.reduce((s, c) => s + c[0], 0) / 4
+          check('Corners follow synthetic motion (+x)', cx1 > cx0 + 10,
+            `center x: ${cx0.toFixed(1)} -> ${cx1.toFixed(1)}`)
+        }
+      }
+
+      log('info', `Median proc: ${median}ms | detect frames: ${N - trackFrames.length}, track frames: ${trackFrames.length}`)
+      const detectTimes = results.filter(r => r && r.debug && r.debug.mode === 'detect').map(r => r.debug.proc_ms)
+      const trackTimes = trackFrames.map(r => r.debug.proc_ms)
+      if (detectTimes.length && trackTimes.length) {
+        const avg = a => (a.reduce((s, v) => s + v, 0) / a.length).toFixed(1)
+        log('info', `avg detect: ${avg(detectTimes)}ms | avg track: ${avg(trackTimes)}ms`)
+      }
+
+      finish()
+      worker.terminate()
+    }
+
+    function finish() {
+      const passed = checks.filter(c => c.pass).length
+      const failed = checks.length - passed
+      log(failed ? 'fail' : 'pass', `========== ${passed}/${checks.length} checks passed ==========`)
+      window.__TEST_DONE__ = { passed, failed, checks, results: results.length }
+    }
+
+    main().catch(e => { log('fail', 'FATAL: ' + (e.stack || e)); finish() })
+  </script>
+</body>
+</html>

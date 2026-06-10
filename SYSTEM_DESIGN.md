@@ -1,4 +1,10 @@
-# WebAR SDK - System Design Document
+# WebAR SDK - System Design Document (legacy server-tracking mode)
+
+> **NOTE:** The product has moved to client-side WASM tracking — see
+> **ARCHITECTURE.md** for the current architecture. This document describes
+> the original server-side pipeline, which is preserved as a fallback at
+> `/static/legacy-server.html` and as the reference implementation for the
+> client-side port.
 
 ## Overview
 
@@ -65,6 +71,8 @@ WebAR-Python/
 ├── BUILD.md                    # Build/setup documentation
 ├── SYSTEM_DESIGN.md            # This document
 │
+├── preprocess_target.py        # Offline target feature extraction (.webarimg)
+│
 ├── src/                        # Python backend modules
 │   ├── __init__.py
 │   ├── interfaces.py           # Abstract interfaces (ISP pattern)
@@ -75,18 +83,9 @@ WebAR-Python/
 │   │   ├── orb_detector.py     # ORB detector (USED)
 │   │   └── akaze_detector.py   # AKAZE detector (available, not default)
 │   │
-│   ├── matchers/               # Feature matching strategies
-│   │   ├── bf_matcher.py       # Brute-Force matcher (USED)
-│   │   └── flann_matcher.py    # FLANN matcher (available, not default)
-│   │
-│   ├── stabilizers/            # Pose smoothing (available for future use)
-│   │   └── kalman_stabilizer.py # Kalman filter
-│   │
-│   ├── trackers/               # Frame-to-frame tracking (available for future use)
-│   │   └── optical_flow_tracker.py # Optical flow
-│   │
-│   └── renderers/              # Server-side visualization (available for future use)
-│       └── contour_renderer.py # Contour drawing
+│   └── matchers/               # Feature matching strategies
+│       ├── bf_matcher.py       # Brute-Force matcher (USED)
+│       └── flann_matcher.py    # FLANN matcher (available, not default)
 │
 ├── static/                     # Frontend assets
 │   ├── index.html              # Main AR viewer (contains App class inline)
@@ -98,16 +97,22 @@ WebAR-Python/
 │   │   └── styles.css
 │   │
 │   ├── assets/
-│   │   ├── ranger-base-image.jpg   # Target image
-│   │   └── ranger-3d-model.glb     # 3D model
+│   │   ├── ranger-base-image.jpg      # Target image
+│   │   ├── ranger-base-image.webarimg # Preprocessed target features
+│   │   └── ranger-3d-model.glb        # 3D model
 │   │
 │   └── js/
 │       ├── camera.js           # Camera access wrapper
+│       ├── camera-intrinsics.js # FOV / intrinsics management
+│       ├── device-motion.js    # IMU (orientation) manager
 │       ├── websocket.js        # WebSocket client
-│       └── model-renderer.js   # Three.js 3D rendering
+│       ├── model-renderer.js   # Three.js 3D rendering + smoothing
+│       ├── frame-capture.js    # (future) raw-pixel capture for WASM path
+│       └── vision-manager.js   # (future) client-side vision abstraction
 │
 └── tests/
-    └── test_detector.py        # Unit tests
+    ├── test_detector.py        # Detector/matcher/processor unit tests
+    └── test_pose_solver.py     # State machine + session isolation tests
 ```
 
 ---
@@ -119,10 +124,11 @@ WebAR-Python/
 The main detection engine implementing multi-scale ORB feature matching.
 
 **Key Features:**
-- Multi-scale pyramid detection: `[1.0, 0.75, 0.5, 0.4, 0.3]`
+- Multi-scale pyramid detection: `[1.0, 0.5, 0.3]` (sparse; ORB's internal
+  pyramid covers intermediate scales)
 - RANSAC-based homography with validation
 - Strict quad geometry validation (area, convexity, angles)
-- Per-frame detection with no temporal state (pure function)
+- `create_session_copy()`: per-client state sharing read-only target data
 
 **Detection Flow:**
 ```
@@ -147,13 +153,17 @@ detect(frame) -> extract ORB -> match each scale -> RANSAC homography
 
 ### 2. PoseSolver (pose_solver.py)
 
-6DoF pose estimation using OpenCV's solvePnP.
+6DoF pose estimation using OpenCV's solvePnP, with a tracking state machine
+(SEARCHING → TRACKING → LOST → SEARCHING).
 
 **Key Features:**
-- `compute_pose_ransac()` uses solvePnPRansac with N inlier points (more robust)
-- `compute_pose()` uses solvePnP with 4 corners (legacy, still available)
-- Temporal smoothing via EMA (alpha=0.4)
-- Outlier rejection (max 0.5m translation, 30deg rotation jump)
+- `compute_pose_ransac()` uses solvePnPRansac with N inlier points
+  (SOLVEPNP_IPPE for initial planar detection, ITERATIVE+prior when tracking)
+- `notify_no_detection()` MUST be called on missed frames so the state
+  machine decays and stale pose priors are discarded
+- NO backend smoothing: the frontend renderer owns all temporal smoothing
+  (stacked smoothing on both ends was a major source of lag)
+- One PoseSolver per client session (see `ImageProcessor.create_session_copy`)
 - OpenCV to Three.js coordinate conversion
 
 **Coordinate Conversion:**
@@ -167,13 +177,16 @@ flip_yz = [[1, 0, 0], [0, -1, 0], [0, 0, -1]]
 
 ### 3. ModelRenderer (model-renderer.js)
 
-Three.js-based AR rendering using orthographic camera for pixel-perfect positioning.
+Three.js-based AR rendering with a perspective camera driven by the 6DoF pose.
 
 **Key Features:**
-- Orthographic camera matching display dimensions
-- Video-to-display coordinate conversion (handles object-fit: cover)
+- Single time-based smoothing stage (`alpha = 1 - exp(-dt/tau)`) run at
+  render rate toward the latest ~12Hz vision pose
+- IMU rotation prediction between vision updates (baseline synced per
+  frame id via `pose.id`)
+- Dead-reckon grace window (500ms) before the model hides on tracking loss
+- FOV corrected for the `object-fit: cover` crop of the video element
 - GLB model loading with auto-centering and scaling
-- Model positioned at detection center, scaled to match target size
 
 ---
 
@@ -184,23 +197,26 @@ Three.js-based AR rendering using orthographic camera for pixel-perfect position
    Camera.start() -> getUserMedia() -> video element
 
 2. SEND (index.html App class)
-   video -> canvas -> JPEG 60% -> base64 -> socket.emit('frame')
-   Throttled: 10 FPS, downscaled to 480px max dimension
+   video -> reused canvas -> JPEG 50% -> base64 -> socket.emit('frame')
+   Throttled: ~12 FPS, downscaled to 480px max dimension
+   IMU quaternion snapshotted per frame id for later sync
 
-3. DETECT (app.py -> processor.py)
-   Base64 decode -> OpenCV image -> ImageProcessor.detect()
-   Returns: corners, detected, confidence
+3. DETECT (app.py -> processor.py, per-session processor)
+   Base64 decode (grayscale) -> ImageProcessor.detect()
+   Returns: corners, inlier correspondences, detected, confidence
+   On miss: processor.notify_no_detection() (drives state machine decay)
 
 4. POSE (app.py -> pose_solver.py)
-   corners -> PoseSolver.compute_pose()
-   Returns: 4x4 matrix, position, rotation, distance
+   inliers -> ImageProcessor.estimate_pose() -> solvePnP (raw, unsmoothed)
+   Returns: 4x4 matrix, position, rotation, distance, state, confidence
 
 5. RESPOND (app.py)
-   socket.emit('result', {detected, corners, pose, debug})
+   socket.emit('result', {...}, to=session.sid)   # per-client, no broadcast
+   pose carries the frame id for IMU sync
 
 6. RENDER (index.html -> model-renderer.js)
-   corners -> videoToDisplay() -> position model
-   pose.matrix -> update Three.js camera/model
+   updatePose() records the target pose; render() smooths toward it at
+   display rate (time-based alpha) + IMU rotation prediction in between
 ```
 
 ---
@@ -326,7 +342,8 @@ socket.on('status', {
 
 ### Detection Thresholds (processor.py)
 ```python
-SCALES = [1.0, 0.75, 0.5, 0.4, 0.3]  # Multi-scale pyramid
+SCALES = [1.0, 0.5, 0.3]             # Sparse external pyramid (ORB's internal
+                                     # 8-level pyramid covers intermediates)
 MIN_MATCHES = 10                     # Minimum feature matches
 MIN_INLIERS_BASE = 8                 # Minimum RANSAC inliers
 RANSAC_THRESH = 4.0                  # RANSAC reprojection threshold (pixels)
@@ -336,17 +353,21 @@ MIN_INLIER_RATIO_SMALL = 0.50        # Stricter for small scales
 
 ### Pose Estimation (pose_solver.py)
 ```python
-smoothing_alpha = 0.4                # EMA factor (0.1=smooth, 1.0=raw)
-use_extrinsic_guess = True           # Use previous pose as initial guess
-max_translation_jump = 0.5           # Max allowed translation jump (meters)
-max_rotation_jump = 30.0             # Max allowed rotation jump (degrees)
+MIN_INLIERS_DETECT = 8               # Inliers for initial detection
+MIN_INLIERS_TRACK = 6                # Inliers to maintain tracking
+MAX_REPROJ_ERROR = 5.0               # Max reprojection error (pixels)
+LOST_FRAME_THRESHOLD = 5             # Missed frames before SEARCHING
+# No backend smoothing - the frontend renderer owns it.
 ```
 
-### Frame Processing (index.html)
+### Frame Processing (index.html / model-renderer.js)
 ```javascript
-minFrameInterval = 100               // 10 FPS max
-jpegQuality = 0.6                    // 60% JPEG compression
+sendInterval = 80                    // ms between frames (~12 FPS to backend)
+jpegQuality = 0.5                    // JPEG compression for transport
 maxDimension = 480                   // Downscale to 480px
+positionTau = 0.12                   // Position smoothing time constant (s)
+rotationTau = 0.10                   // Rotation smoothing time constant (s)
+deadReckonLimit = 500                // ms to coast on IMU after vision loss
 ```
 
 ---
@@ -356,9 +377,8 @@ maxDimension = 480                   // Downscale to 480px
 | Layer | Technology | Version |
 |-------|------------|---------|
 | Backend Framework | Flask | 3.0+ |
-| WebSocket | Flask-SocketIO | 5.3+ |
+| WebSocket | Flask-SocketIO (threading) + simple-websocket | 5.3+ |
 | Computer Vision | OpenCV | 4.11+ |
-| Async Server | eventlet | 0.35+ |
 | Frontend 3D | Three.js | 0.128 |
 | Transport | Socket.IO | 4.6 |
 | Model Format | glTF/GLB | 2.0 |
@@ -401,7 +421,9 @@ ngrok http 5000
 - `tests/test_detector.py` - updated to match new ImageProcessor signature
 
 ### Files Kept for Future Use:
-- `src/trackers/optical_flow_tracker.py` - available for frame-to-frame tracking
-- `src/stabilizers/kalman_stabilizer.py` - available for pose smoothing
-- `src/renderers/contour_renderer.py` - available for server-side visualization
+- `src/detectors/akaze_detector.py` / `src/matchers/flann_matcher.py` -
+  alternative strategies, not wired by default
 - `model-editor.html` - simpler alternative to alignment-tool
+
+(`frame-capture.js`/`vision-manager.js` were removed - superseded by the
+real client-side SDK in `static/sdk/`.)

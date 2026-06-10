@@ -3,11 +3,13 @@ Optimized Multi-Scale ORB Detection
 Best balance of performance and accuracy with no false positives.
 """
 
-from typing import Tuple, Optional, Dict, List
+import logging
+import os
+import pickle
+from typing import Tuple, Optional, Dict
+
 import cv2
 import numpy as np
-import pickle
-import os
 
 from .interfaces import (
     IImageProcessor,
@@ -16,27 +18,31 @@ from .interfaces import (
 )
 from .pose_solver import PoseSolver, TrackingState
 
+log = logging.getLogger(__name__)
+
 
 class ImageProcessor(IImageProcessor):
     """Optimized multi-scale ORB detection with 6DoF pose estimation."""
-    
-    # Scale levels - balanced range
-    SCALES = [1.0, 0.75, 0.5, 0.4, 0.3]
-    
+
+    # Scale levels. Kept sparse on purpose: ORB itself already runs an
+    # 8-level internal pyramid (scale_factor 1.2 ≈ 3.6x range), so dense
+    # external scales mostly duplicated work. Each extra scale is a full
+    # brute-force match per frame.
+    SCALES = [1.0, 0.5, 0.3]
+
     # Thresholds
     MIN_MATCHES = 10
     MIN_INLIERS_BASE = 8
     RANSAC_THRESH = 4.0  # Tighter RANSAC
-    
+
     # Anti-false-positive settings
     MIN_INLIER_RATIO = 0.40  # 40% of matches must survive RANSAC
     MIN_INLIER_RATIO_SMALL = 0.50  # 50% for small scales
-    
+
     # Target physical size (meters) - base dimension for pose estimation
     # The actual aspect ratio is calculated from the target image
     TARGET_PHYSICAL_BASE = 1.0  # Base size in meters
 
-    
     def __init__(self, detector, matcher):
         self._detector = detector
         self._matcher = matcher
@@ -46,39 +52,42 @@ class ImageProcessor(IImageProcessor):
         self._pyramid = []
         self._last_scale = 1.0
         self._debug_info = {}
-        
-        # Pose solver for 6DoF pose computation
-        # Target size will be set when set_target() is called
-        self._pose_solver = PoseSolver(
-            smoothing_alpha=0.7,  # More responsive (less smoothing)
-            use_extrinsic_guess=True
+
+        # Pose solver for 6DoF pose computation (state machine + PnP).
+        # Target size will be set when set_target() is called.
+        # NOTE: no backend smoothing - the frontend renderer owns smoothing.
+        self._pose_solver = PoseSolver()
+
+    def create_session_copy(self) -> "ImageProcessor":
+        """Create a per-session processor sharing the (read-only) target data.
+
+        The pyramid/keypoints/descriptors are shared references; only the
+        mutable tracking state (pose solver, last scale, debug info) is fresh.
+        This is what makes multi-client use safe: each socket session gets its
+        own state machine instead of corrupting a global one.
+        """
+        clone = ImageProcessor(self._detector, self._matcher)
+        clone._target_image = self._target_image
+        clone._target_corners = self._target_corners
+        clone._pyramid = self._pyramid
+        clone._pose_solver.set_target_size(
+            self._pose_solver._target_width,
+            self._pose_solver._target_height
         )
-    
+        return clone
+
     def set_target(self, target_image: np.ndarray) -> bool:
         if target_image is None or target_image.size == 0:
             return False
-        
+
         self._target_image = target_image
         h, w = target_image.shape[:2]
         self._target_corners = np.array([
             [0, 0], [w, 0], [w, h], [0, h]
         ], dtype=np.float32)
-        
-        # Calculate physical size maintaining target aspect ratio
-        # Use the larger dimension as the base (1 meter)
-        aspect_ratio = w / h
-        
-        if w >= h:
-            target_width = self.TARGET_PHYSICAL_BASE
-            target_height = self.TARGET_PHYSICAL_BASE / aspect_ratio
-        else:
-            target_height = self.TARGET_PHYSICAL_BASE
-            target_width = self.TARGET_PHYSICAL_BASE * aspect_ratio
-        
-        # Update pose solver with correct dimensions
-        self._pose_solver.set_target_size(target_width, target_height)
-        print(f"Target physical size: {target_width:.3f}m x {target_height:.3f}m (aspect: {aspect_ratio:.3f})")
-        
+
+        self._set_physical_size(w, h)
+
         # Build pyramid
         self._pyramid = []
         for scale in self.SCALES:
@@ -86,7 +95,7 @@ class ImageProcessor(IImageProcessor):
                 scaled = target_image
             else:
                 scaled = cv2.resize(target_image, (int(w*scale), int(h*scale)))
-            
+
             kp, desc = self._detector.detect_and_compute(scaled)
             if desc is not None and len(kp) >= 4:
                 # Scale keypoints back to original size
@@ -98,17 +107,31 @@ class ImageProcessor(IImageProcessor):
                     'descriptors': desc,
                     'kp_count': len(kp)
                 })
-        
+
         if not self._pyramid:
             return False
-        
-        print(f"Pyramid: {[p['kp_count'] for p in self._pyramid]} keypoints")
+
+        log.info("Pyramid: %s keypoints", [p['kp_count'] for p in self._pyramid])
         return True
 
+    def _set_physical_size(self, w: int, h: int):
+        """Compute physical target size (meters) preserving aspect ratio."""
+        aspect_ratio = w / h
+        if w >= h:
+            target_width = self.TARGET_PHYSICAL_BASE
+            target_height = self.TARGET_PHYSICAL_BASE / aspect_ratio
+        else:
+            target_height = self.TARGET_PHYSICAL_BASE
+            target_width = self.TARGET_PHYSICAL_BASE * aspect_ratio
+
+        self._pose_solver.set_target_size(target_width, target_height)
+        log.info("Target physical size: %.3fm x %.3fm (aspect: %.3f)",
+                 target_width, target_height, aspect_ratio)
+
     def load_target_blob(self, blob_path: str) -> bool:
-        """Load preprocessed heart image target from .webarimg blob."""
+        """Load preprocessed target features from a .webarimg blob."""
         if not os.path.exists(blob_path):
-            print(f"Error: Blob not found at {blob_path}")
+            log.error("Blob not found at %s", blob_path)
             return False
 
         try:
@@ -116,23 +139,22 @@ class ImageProcessor(IImageProcessor):
                 data = pickle.load(f)
 
             w, h = data['original_size']
-            self._target_image = np.zeros((h, w, 3), dtype=np.uint8) # Dummy image for aspect ratio
+            self._target_image = np.zeros((h, w, 3), dtype=np.uint8)  # Dummy image for aspect ratio
             self._target_corners = np.array([
                 [0, 0], [w, 0], [w, h], [0, h]
             ], dtype=np.float32)
 
-            aspect_ratio = w / h
-            if w >= h:
-                target_width = self.TARGET_PHYSICAL_BASE
-                target_height = self.TARGET_PHYSICAL_BASE / aspect_ratio
-            else:
-                target_height = self.TARGET_PHYSICAL_BASE
-                target_width = self.TARGET_PHYSICAL_BASE * aspect_ratio
+            self._set_physical_size(w, h)
 
-            self._pose_solver.set_target_size(target_width, target_height)
-            
+            # Blobs may contain more scales than we use at runtime - only
+            # load the ones in SCALES so match cost stays bounded.
+            wanted = [e for e in data['pyramid']
+                      if any(abs(e['scale'] - s) < 1e-6 for s in self.SCALES)]
+            if not wanted:
+                wanted = data['pyramid']
+
             self._pyramid = []
-            for entry in data['pyramid']:
+            for entry in wanted:
                 # Reconstruct cv2.KeyPoint objects
                 keypoints = []
                 for k in entry['keypoints']:
@@ -143,7 +165,7 @@ class ImageProcessor(IImageProcessor):
                         class_id=k['class_id']
                     )
                     keypoints.append(kp)
-                
+
                 self._pyramid.append({
                     'scale': entry['scale'],
                     'keypoints': keypoints,
@@ -151,13 +173,15 @@ class ImageProcessor(IImageProcessor):
                     'kp_count': len(keypoints)
                 })
 
-            print(f"✓ Target loaded from blob: {blob_path}")
-            print(f"Pyramid: {[p['kp_count'] for p in self._pyramid]} keypoints")
+            log.info("Target loaded from blob: %s", blob_path)
+            log.info("Pyramid: %s keypoints (scales %s)",
+                     [p['kp_count'] for p in self._pyramid],
+                     [p['scale'] for p in self._pyramid])
             return True
         except Exception as e:
-            print(f"Error loading target blob: {e}")
+            log.error("Error loading target blob: %s", e)
             return False
-    
+
     def detect(self, frame: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], bool, float]:
         """
         Detect target in frame using multi-scale ORB matching.
@@ -253,9 +277,10 @@ class ImageProcessor(IImageProcessor):
             # Early exit if excellent
             if inliers_count >= 15 and inlier_ratio >= 0.5 and reproj_error < 2.0:
                 break
-            
+
             # FAST-TRACKING Early exit: during stable tracking, even moderate success is enough to move on
-            if self._pose_solver._state == TrackingState.TRACKING and inliers_count >= 12 and inlier_ratio >= 0.45 and reproj_error < 3.5:
+            if (self._pose_solver.get_state() == TrackingState.TRACKING
+                    and inliers_count >= 12 and inlier_ratio >= 0.45 and reproj_error < 3.5):
                 break
 
         if best:
@@ -270,7 +295,7 @@ class ImageProcessor(IImageProcessor):
             return best['corners'], best['inlier_src'], best['inlier_dst'], True, best['confidence']
 
         return None, None, None, False, 0.0
-    
+
     def _get_scale_order(self):
         ordered, others = [], []
         for e in self._pyramid:
@@ -280,35 +305,35 @@ class ImageProcessor(IImageProcessor):
                 others.append(e)
         others.sort(key=lambda x: x['scale'])
         return ordered + others
-    
+
     def _validate_quad(self, corners, scale: float) -> bool:
         """Strict quad validation to prevent false positives."""
         if corners is None or len(corners) != 4:
             return False
-        
+
         pts = corners.reshape(4, 2).astype(np.float32)
-        
+
         # Area check - scale dependent
         area = cv2.contourArea(pts)
         min_area = max(500, 1500 * scale)  # Larger min at close range
         if area < min_area:
             return False
-        
+
         # Convexity - must be a proper quad
         hull = cv2.convexHull(pts, returnPoints=False)
         if len(hull) != 4:
             return False
-        
+
         # Edge lengths
         edges = [np.linalg.norm(pts[(i+1)%4] - pts[i]) for i in range(4)]
         min_edge = max(20, 30 * scale)
         if min(edges) < min_edge:
             return False
-        
+
         # Aspect ratio check
         if max(edges) / min(edges) > 6:
             return False
-        
+
         # Check for reasonable angles (not too acute)
         for i in range(4):
             v1 = pts[(i+1)%4] - pts[i]
@@ -317,9 +342,9 @@ class ImageProcessor(IImageProcessor):
             angle = np.arccos(np.clip(cos_angle, -1, 1))
             if angle < 0.3 or angle > 2.8:  # ~17° to ~160°
                 return False
-        
+
         return True
-    
+
     def _compute_reproj_error(self, src, dst, H, mask) -> float:
         if mask is None or np.sum(mask) == 0:
             return float('inf')
@@ -364,7 +389,32 @@ class ImageProcessor(IImageProcessor):
         pts_3d[:, 2] = 0  # Z = 0 (planar target)
 
         return pts_3d
-    
+
+    def estimate_pose(self, inlier_src: np.ndarray, inlier_dst: np.ndarray,
+                      frame_width: int, frame_height: int) -> Optional[Dict]:
+        """Compute 6DoF pose from detect() inlier correspondences.
+
+        Maps target-image inliers to 3D world points and delegates to the
+        pose solver. This is the one entry point app code should use.
+        """
+        object_points = self._map_2d_to_3d(inlier_src.reshape(-1, 2))
+        image_points = inlier_dst.reshape(-1, 2)
+        return self._pose_solver.compute_pose_ransac(
+            object_points, image_points, frame_width, frame_height
+        )
+
+    def notify_no_detection(self):
+        """Tell the pose solver the detector found nothing this frame.
+
+        Must be called on every missed frame so the tracking state machine
+        decays (TRACKING → LOST → SEARCHING) instead of keeping a stale prior.
+        """
+        self._pose_solver.notify_no_detection()
+
+    def set_camera_intrinsics(self, fx: float, fy: float, cx: float, cy: float):
+        """Forward camera intrinsics to the pose solver."""
+        self._pose_solver.set_camera_intrinsics(fx, fy, cx, cy)
+
     def process_frame(self, frame):
         corners, _, _, detected, conf = self.detect(frame)
         result = frame.copy()
@@ -374,10 +424,10 @@ class ImageProcessor(IImageProcessor):
             for p in pts:
                 cv2.circle(result, tuple(p), 5, (0, 255, 0), -1)
         return result, detected
-    
+
     def is_ready(self):
         return self._target_image is not None and len(self._pyramid) > 0
-    
+
     def get_target_info(self):
         if not self.is_ready():
             return {"ready": False}
@@ -386,39 +436,14 @@ class ImageProcessor(IImageProcessor):
             "keypoints_count": sum(p['kp_count'] for p in self._pyramid),
             "pyramid_scales": len(self._pyramid)
         }
-    
+
     def get_debug_info(self):
         return self._debug_info.copy()
-    
-    def compute_pose_6dof(self, object_points: np.ndarray, image_points: np.ndarray,
-                          frame_width: int, frame_height: int,
-                          fov_degrees: float = 60.0) -> Optional[Dict]:
-        """
-        Compute 6DoF pose from inlier keypoints using solvePnPRansac.
 
-        Args:
-            object_points: Nx3 array of 3D target points (world coordinates)
-            image_points: Nx2 array of 2D scene points (image coordinates)
-            frame_width: Width of the camera frame
-            frame_height: Height of the camera frame
-            fov_degrees: Camera field of view in degrees
-
-        Returns:
-            Pose dict with matrix, position, rotation, distance, or None if failed
-        """
-        return self._pose_solver.compute_pose_ransac(
-            object_points, image_points,
-            frame_width, frame_height, fov_degrees
-        )
-    
     def get_pose(self) -> Optional[Dict]:
         """Return the last computed 6DoF pose."""
         return self._pose_solver.get_last_pose()
-    
+
     def reset_pose(self):
         """Reset pose estimator state (call when target is lost)."""
         self._pose_solver.reset()
-    
-    def set_pose_smoothing(self, alpha: float):
-        """Adjust pose smoothing. Lower = smoother, higher = more responsive."""
-        self._pose_solver.set_smoothing(alpha)

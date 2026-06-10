@@ -47,6 +47,12 @@ class DeviceMotionManager {
         this.linAccel = new THREE.Vector3()
         this.linVel = new THREE.Vector3()
 
+        // Bind handlers ONCE so removeEventListener actually matches.
+        // (Calling .bind() inline in add/remove creates different functions,
+        // so the old stopListening never removed anything.)
+        this._onOrientation = this.handleOrientation.bind(this)
+        this._onMotion = this.handleMotion.bind(this)
+
         console.log('[IMU] DeviceMotionManager created')
     }
 
@@ -100,8 +106,8 @@ class DeviceMotionManager {
     startListening() {
         if (this.isActive) return
 
-        window.addEventListener('deviceorientation', this.handleOrientation.bind(this), true)
-        window.addEventListener('devicemotion', this.handleMotion.bind(this), true)
+        window.addEventListener('deviceorientation', this._onOrientation, true)
+        window.addEventListener('devicemotion', this._onMotion, true)
 
         this.isActive = true
         console.log('[IMU] Listening for device orientation and motion')
@@ -111,8 +117,8 @@ class DeviceMotionManager {
      * Stop listening
      */
     stopListening() {
-        window.removeEventListener('deviceorientation', this.handleOrientation.bind(this), true)
-        window.removeEventListener('devicemotion', this.handleMotion.bind(this), true)
+        window.removeEventListener('deviceorientation', this._onOrientation, true)
+        window.removeEventListener('devicemotion', this._onMotion, true)
 
         this.isActive = false
         this.hasReference = false
@@ -132,10 +138,12 @@ class DeviceMotionManager {
         // Raw values for prediction (zero-lag)
         this.rawQuaternion = this.eulerToQuaternion(alpha, beta, gamma)
 
-        // Smoothed values for general status (lagged)
-        this.orientation.alpha = this.lerp(this.orientation.alpha, alpha, this.smoothingFactor)
-        this.orientation.beta = this.lerp(this.orientation.beta, beta, this.smoothingFactor)
-        this.orientation.gamma = this.lerp(this.orientation.gamma, gamma, this.smoothingFactor)
+        // Smoothed values for general status (lagged).
+        // Only alpha wraps at 0/360; beta (-180..180) and gamma (-90..90)
+        // must use plain lerp - the wrap logic corrupted them at boundaries.
+        this.orientation.alpha = this.lerpAngle(this.orientation.alpha, alpha, this.smoothingFactor)
+        this.orientation.beta = this.lerpLinear(this.orientation.beta, beta, this.smoothingFactor)
+        this.orientation.gamma = this.lerpLinear(this.orientation.gamma, gamma, this.smoothingFactor)
 
         this.quaternion = this.eulerToQuaternion(
             this.orientation.alpha,
@@ -266,7 +274,11 @@ class DeviceMotionManager {
 
     // ========== Math Utilities ==========
 
-    lerp(a, b, t) {
+    lerpLinear(a, b, t) {
+        return a + (b - a) * t
+    }
+
+    lerpAngle(a, b, t) {
         // Handle angle wrapping for alpha (0-360)
         if (Math.abs(b - a) > 180) {
             if (b > a) a += 360

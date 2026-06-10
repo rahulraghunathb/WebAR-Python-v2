@@ -372,7 +372,7 @@
           <div class="permission-item" id="permCamera">⏳ Camera</div>
           <div class="permission-item" id="permMotion">⏳ Motion Sensors</div>
           <div class="permission-item" id="permServer">
-            ⏳ Vision Engine (WASM)
+            ⏳ Server Connection
           </div>
         </div>
         <button class="start-btn" id="startBtn" disabled>
@@ -382,34 +382,27 @@
     </div>
 
     <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="/static/js/camera.js"></script>
+    <script src="/static/js/websocket.js"></script>
     <script src="/static/js/camera-intrinsics.js"></script>
     <script src="/static/js/device-motion.js"></script>
     <script src="/static/js/model-renderer.js"></script>
-    <script src="/static/sdk/webar-sdk.js"></script>
     <script>
       /**
        * WebAR Application
-       * Client-side 6DoF image tracking: all vision runs in a Web Worker
-       * (OpenCV WASM) via WebARSDK - no server in the frame loop.
+       * High-end 6DoF image tracking with proper camera intrinsics
        */
       class WebARApp {
         constructor() {
           // Managers
           this.intrinsicsManager = new CameraIntrinsicsManager()
           this.cameraManager = new CameraManager()
+          this.wsManager = new WebSocketManager()
           this.modelRenderer = new ModelRenderer("threeCanvas")
           this.imuManager = new DeviceMotionManager()
-
-          // Client-side vision engine
-          this.sdk = new WebARSDK({
-            video: document.getElementById("videoElement"),
-            targetUrl: "/static/assets/ranger-base-image.jpg",
-            intrinsicsProvider: this.intrinsicsManager,
-            maxDimension: 480,
-          })
 
           // DOM elements
           this.video = document.getElementById("videoElement")
@@ -424,8 +417,13 @@
           // State
           this.running = false
           this.showInfo = false
+          this.lastSend = 0
           this.pose = null
           this.debug = {}
+
+          // Reusable capture canvas (avoid per-frame allocation)
+          this.captureCanvas = document.createElement("canvas")
+          this.captureCtx = this.captureCanvas.getContext("2d")
 
           // FPS tracking
           this.fps = 0
@@ -449,11 +447,9 @@
           // We'll request this during the start button click
           this.updatePermissionUI(permissions)
 
-          // 3. Boot the client-side vision engine (WASM load + target compile).
-          // Runs in parallel with the user reading the start screen; the
-          // frame pump no-ops until the camera starts.
-          this.startStatus.textContent = "Loading vision engine..."
-          this.initEngine()
+          // 3. Connect to backend
+          this.startStatus.textContent = "Connecting to server..."
+          this.connectWebSocket()
         }
 
         updatePermissionUI(permissions) {
@@ -489,40 +485,32 @@
           window.addEventListener("resize", () => this.handleResize())
         }
 
-        async initEngine() {
-          const engineEl = document.getElementById("permServer")
+        connectWebSocket() {
+          const serverEl = document.getElementById("permServer")
 
-          this.sdk.on("result", (data) => this.handleResult(data))
+          this.wsManager.onConnect(() => {
+            this.statusDot.classList.add("connected")
+            serverEl.textContent = "✓ Server Connected"
+            serverEl.classList.add("granted")
+          })
 
-          // Snapshot IMU orientation per captured frame so the renderer can
-          // compute rotation deltas against the exact capture moment.
-          this.sdk.on("framesent", ({ id }) => {
-            if (this.imuManager.isActive && this.modelRenderer.saveIMUBaseline) {
-              this.modelRenderer.saveIMUBaseline(
-                id,
-                this.imuManager.rawQuaternion || this.imuManager.quaternion
-              )
+          this.wsManager.onDisconnect(() => {
+            this.statusDot.classList.remove("connected")
+            serverEl.textContent = "✗ Server Disconnected"
+            serverEl.classList.remove("granted")
+            serverEl.classList.add("denied")
+          })
+
+          this.wsManager.onStatus((data) => {
+            if (data.ready) {
+              this.startStatus.textContent = "Ready to start"
+              this.startBtn.disabled = false
             }
           })
 
-          this.sdk.on("error", (err) => {
-            console.error("[App] SDK error:", err)
-          })
+          this.wsManager.onResult((data) => this.handleResult(data))
 
-          try {
-            const info = await this.sdk.start()
-            console.log("[App] Vision engine ready:", info)
-            this.statusDot.classList.add("connected")
-            engineEl.textContent = "✓ Vision Engine (WASM)"
-            engineEl.classList.add("granted")
-            this.startStatus.textContent = "Ready to start"
-            this.startBtn.disabled = false
-          } catch (err) {
-            console.error("[App] Vision engine failed:", err)
-            engineEl.textContent = "✗ Vision Engine failed"
-            engineEl.classList.add("denied")
-            this.startStatus.textContent = "Engine failed: " + err.message
-          }
+          this.wsManager.connect()
         }
 
         handleResult(data) {
@@ -663,19 +651,82 @@
           if (!this.running) return
           requestAnimationFrame(() => this.loop())
 
-          // Render 3D (the SDK pumps frames to the vision worker on its own)
+          // Render 3D
           this.modelRenderer.render()
 
           // Real-time UI updates (FPS, IMU)
           this.updateLocalInfo()
 
-          // FPS counter
+          // Send frame to backend (Continuous flow)
           const now = performance.now()
+          if (now - this.lastSend > 80) {
+            // ~12 FPS to backend. Server handles LIFO skips if it falls behind.
+            this.sendFrame()
+            this.lastSend = now
+          }
+
+          // FPS counter
           this.frameCount++
           if (now - this.lastFpsTime > 1000) {
             this.fps = this.frameCount
             this.frameCount = 0
             this.lastFpsTime = now
+          }
+        }
+
+        sendFrame() {
+          if (!this.video.videoWidth) return
+
+          // Create unique ID for this frame (timestamp)
+          const frameId = Date.now()
+
+          // Capture current IMU state as baseline for synchronization.
+          // Use the RAW quaternion: prediction deltas must be computed
+          // against the unsmoothed signal or they inherit the smoothing lag.
+          if (this.imuManager.isActive && this.modelRenderer.saveIMUBaseline) {
+            this.modelRenderer.saveIMUBaseline(
+              frameId,
+              this.imuManager.rawQuaternion || this.imuManager.quaternion
+            )
+          }
+
+          // Reuse one capture canvas (allocating a canvas per frame churned
+          // GC and main-thread time at ~12 sends/sec)
+          const canvas = this.captureCanvas
+
+          // Scale down for network efficiency (max 480px for cellular)
+          const maxDim = 480
+          const scale = Math.min(
+            1,
+            maxDim / Math.max(this.video.videoWidth, this.video.videoHeight)
+          )
+          const w = Math.floor(this.video.videoWidth * scale)
+          const h = Math.floor(this.video.videoHeight * scale)
+          if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w
+            canvas.height = h
+          }
+
+          // Draw video frame
+          this.captureCtx.drawImage(this.video, 0, 0, w, h)
+
+          // Get intrinsics for this frame size
+          const intrinsics = this.intrinsicsManager.getIntrinsicsForFrame(
+            canvas.width,
+            canvas.height
+          )
+
+          // Send with intrinsics and ID (Lower quality for cellular performance)
+          const frameData = canvas.toDataURL("image/jpeg", 0.5)
+
+          if (this.wsManager.sendFrameWithIntrinsics) {
+            this.wsManager.sendFrameWithIntrinsics(
+              frameData,
+              intrinsics,
+              frameId
+            )
+          } else {
+            this.wsManager.sendFrame(frameData)
           }
         }
 

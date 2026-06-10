@@ -4,8 +4,16 @@
  * SIMPLE ANCHORING APPROACH:
  * - Model is placed at the center of the detected target image
  * - Model sits ON TOP of the target (positive Z direction)
- * - Model is normalized to fit within 0.3 meters (30cm)
  * - Camera moves around the static model based on 6DoF pose
+ *
+ * SMOOTHING (single stage, owned here):
+ * - The backend sends RAW poses at ~12Hz. This renderer interpolates toward
+ *   the latest pose every render frame using a TIME-BASED alpha
+ *   (alpha = 1 - exp(-dt/tau)), which is frame-rate independent.
+ * - IMU rotation prediction fills the gap between vision updates.
+ * - Translational dead-reckoning was removed: double-integrated phone
+ *   accelerometer data in a mismatched reference frame added noise, not
+ *   accuracy.
  *
  * COORDINATE SYSTEM:
  * - World origin: Center of target image
@@ -33,27 +41,40 @@ class ModelRenderer {
             standUpright: true    // Rotate model to stand on target plane
         }
 
-        // Camera
-        this.fov = 60
+        // Camera projection
+        this.baseFov = 60          // Full-frame vertical FOV from intrinsics
+        this.videoAspect = null    // Camera frame aspect (w/h), for cover-crop FOV
         this.fovLocked = false
+        this.displayWidth = 0
+        this.displayHeight = 0
 
-        // Pose state - for smoothing
+        // Pose state - latest vision pose (target) and smoothed pose (last)
+        this.targetPosition = null
+        this.targetQuaternion = null
         this.lastPosition = null
         this.lastQuaternion = null
         this.lastDistance = null
         this.isTracking = false
 
-        // IMU Baseline - for inter-frame prediction
+        // Time-based smoothing constants (seconds). Smaller = more responsive.
+        this.positionTau = 0.12
+        this.rotationTau = 0.10
+
+        // IMU baseline - orientation at the moment the last vision frame was
+        // captured, used for inter-frame rotation prediction
         this.imuOrientationBase = null
         this.imuPredictionEnabled = true
-        this.imuHistory = new Map() // ID -> Quaternion
+        this.imuHistory = new Map() // frame id -> quaternion snapshot
 
-        // Dead Reckoning state
+        // Dead reckoning: how long to coast on IMU after the last vision pose
         this.lastVisionTime = 0
-        this.deadReckonLimit = 500 // ms to continue rotation without vision
+        this.deadReckonLimit = 500 // ms
 
         // IMU manager reference (set externally)
         this.imuManager = null
+
+        // Render clock
+        this._lastRenderTime = 0
 
         // Debug
         this.debugMode = true
@@ -73,7 +94,7 @@ class ModelRenderer {
         this.scene = new THREE.Scene()
 
         // Camera - will be positioned by pose updates
-        this.camera = new THREE.PerspectiveCamera(this.fov, 1, 0.01, 100)
+        this.camera = new THREE.PerspectiveCamera(this.baseFov, 1, 0.01, 100)
         this.camera.position.set(0, 0, 1)
         this.camera.lookAt(0, 0, 0)
 
@@ -218,19 +239,26 @@ class ModelRenderer {
     }
 
     /**
-     * Set camera FOV from intrinsics
-     * Called once at initialization
+     * Set camera FOV (and camera aspect) from intrinsics.
+     * Called once at initialization.
+     *
+     * @param {Object} intrinsics - { fovVertical, videoWidth, videoHeight }
      */
     setIntrinsics(intrinsics) {
         if (!intrinsics || this.fovLocked) return
 
         if (intrinsics.fovVertical && intrinsics.fovVertical > 20 && intrinsics.fovVertical < 120) {
-            this.fov = intrinsics.fovVertical
-            this.camera.fov = this.fov
-            this.camera.updateProjectionMatrix()
+            this.baseFov = intrinsics.fovVertical
             this.fovLocked = true
-            console.log('[Renderer] FOV set:', this.fov.toFixed(1) + '°')
         }
+
+        if (intrinsics.videoWidth && intrinsics.videoHeight) {
+            this.videoAspect = intrinsics.videoWidth / intrinsics.videoHeight
+        }
+
+        this._updateProjection()
+        console.log('[Renderer] FOV set:', this.baseFov.toFixed(1) + '°',
+            'videoAspect:', this.videoAspect ? this.videoAspect.toFixed(3) : 'n/a')
     }
 
     /**
@@ -249,32 +277,53 @@ class ModelRenderer {
         this.canvas.style.width = width + 'px'
         this.canvas.style.height = height + 'px'
 
-        this.camera.aspect = width / height
+        this.displayWidth = width
+        this.displayHeight = height
+        this._updateProjection()
+    }
+
+    /**
+     * Recompute the projection for the current display size.
+     *
+     * The video is displayed with object-fit: cover, which CROPS the camera
+     * frame to the screen aspect. The pose was solved against the FULL frame,
+     * so we must render with the FOV of the visible crop, not the full frame:
+     * - display wider than video  -> vertical crop  -> effective vFOV shrinks
+     * - display narrower than video -> horizontal crop -> vFOV unchanged
+     *   (the aspect handles the horizontal trim)
+     */
+    _updateProjection() {
+        if (!this.camera || !this.displayWidth || !this.displayHeight) return
+
+        const displayAspect = this.displayWidth / this.displayHeight
+        let fov = this.baseFov
+
+        if (this.videoAspect && displayAspect > this.videoAspect) {
+            const t = Math.tan(this.baseFov * Math.PI / 360) * (this.videoAspect / displayAspect)
+            fov = Math.atan(t) * 360 / Math.PI
+        }
+
+        this.camera.fov = fov
+        this.camera.aspect = displayAspect
         this.camera.updateProjectionMatrix()
     }
 
     /**
-     * Update camera pose from backend
+     * Receive a new vision pose from the backend (~12Hz).
      *
-     * WORLD-ANCHORED APPROACH:
-     * - Model is fixed at world origin (on target image)
-     * - Camera moves according to 6DoF pose from vision
-     * - IMU data is used to enhance rotation smoothing
-     * - Heavy smoothing prevents jitter while maintaining responsiveness
+     * Only RECORDS the pose; the actual camera motion happens in render()
+     * where it is smoothed at display rate. Loss-of-tracking is also handled
+     * in render() (dead-reckon window), NOT here - the old code hid the model
+     * on every missed frame which caused flicker and fought the dead-reckoner.
      */
     updatePose(pose) {
-        if (!pose || !pose.matrix) {
-            this.hide()
-            this.isTracking = false
-            return
-        }
+        if (!pose || !pose.matrix) return
 
         const m = pose.matrix
 
         // Validate matrix
         if (!Array.isArray(m) || m.length !== 16 || m.some(v => !isFinite(v))) {
             console.warn('[Renderer] Invalid pose matrix')
-            this.hide()
             return
         }
 
@@ -288,19 +337,16 @@ class ModelRenderer {
         const scale = new THREE.Vector3()
         matrix.decompose(position, quaternion, scale)
 
-        // Get distance from origin
-        const distance = position.length()
-
         // Sanity check
+        const distance = position.length()
         if (distance > 10 || distance < 0.1) {
             return  // Ignore invalid poses, keep last state
         }
 
-        // Initialize smoothed values on first detection
+        // Initialize smoothed pose on (re)acquisition - snap, don't glide in
         if (!this.lastPosition) {
             this.lastPosition = position.clone()
             this.lastQuaternion = quaternion.clone()
-            this.lastDistance = distance
             this.targetPosition = position.clone()
             this.targetQuaternion = quaternion.clone()
             console.log('[Renderer] Initial pose set at distance:', distance.toFixed(2) + 'm')
@@ -309,15 +355,17 @@ class ModelRenderer {
         // Store target pose from vision
         this.targetPosition.copy(position)
         this.targetQuaternion.copy(quaternion)
+        this.lastDistance = distance
 
-        // SYNC: Retrieve the exact IMU state when this frame was captured
+        // SYNC: retrieve the IMU state captured when this frame was sent.
+        // pose.id is attached by the server (same id the client sent).
         if (pose.id && this.imuHistory.has(pose.id)) {
             const histIMU = this.imuHistory.get(pose.id)
             this.imuOrientationBase = new THREE.Quaternion(
                 histIMU.x, histIMU.y, histIMU.z, histIMU.w
             )
-            // Cleanup history up to this ID
-            for (let key of this.imuHistory.keys()) {
+            // Drop history entries at or before this frame
+            for (const key of this.imuHistory.keys()) {
                 if (key <= pose.id) this.imuHistory.delete(key)
                 else break
             }
@@ -329,55 +377,18 @@ class ModelRenderer {
             )
         }
 
-        // ADAPTIVE SMOOTHING - increased for Frame-IMU Sync
-        // We rely on 60 FPS IMU prediction for smoothness, so we can
-        // apply vision corrections almost instantly (0.8 alpha).
-        let positionAlpha = 0.8
-        let rotationAlpha = 0.8
-
-        // If IMU is active and tracking, adjust smoothing based on device stability
-        if (this.imuManager && this.imuManager.isActive && this.imuManager.hasReference) {
-            const rotationMagnitude = this.imuManager.getRotationMagnitude()
-
-            // If device is moving a lot (IMU shows rotation), be more responsive
-            // If device is stable, apply heavier smoothing
-            if (rotationMagnitude > 10) {
-                // Device is rotating significantly - be more responsive
-                positionAlpha = 0.25
-                rotationAlpha = 0.20
-            } else if (rotationMagnitude < 3) {
-                // Device is very stable - heavy smoothing for stability
-                positionAlpha = 0.08
-                rotationAlpha = 0.06
-            }
-        }
-
-        // Smooth position
-        this.lastPosition.lerp(this.targetPosition, positionAlpha)
-
-        // Smooth rotation using slerp
-        this.lastQuaternion.slerp(this.targetQuaternion, rotationAlpha)
-
-        // Apply smoothed pose to camera
-        this.camera.position.copy(this.lastPosition)
-        this.camera.quaternion.copy(this.lastQuaternion)
-
-        // Update distance for display
-        this.lastDistance = this.lastPosition.length()
-
-        // Sync last vision time
         this.lastVisionTime = performance.now()
-
-        // Mark as tracking
         this.isTracking = true
-
-        // Show model and debug objects
         this.show()
+    }
 
-        // RESET INERTIAL STATE
-        if (this.imuManager) {
-            this.imuManager.resetInertialState()
-        }
+    /**
+     * Notify that a frame produced no detection.
+     * Intentionally light: the dead-reckon window in render() decides when
+     * the model actually disappears, so brief misses don't flicker.
+     */
+    notifyLost() {
+        if (!this.isTracking) this.hide()
     }
 
     /**
@@ -392,9 +403,6 @@ class ModelRenderer {
      * Store IMU state for a frame being sent (synchronization)
      */
     saveIMUBaseline(id, quat) {
-        if (!this.imuHistory) this.imuHistory = new Map()
-
-        // Use raw quaternion if available for zero-lag prediction baseline
         this.imuHistory.set(id, { ...quat })
 
         // Safety cap on history size
@@ -405,15 +413,17 @@ class ModelRenderer {
     }
 
     /**
-     * Reset pose smoothing (call when tracking is lost/regained)
+     * Full pose/smoothing reset (also used when the dead-reckon window expires)
      */
     resetPose() {
+        this.targetPosition = null
+        this.targetQuaternion = null
         this.lastPosition = null
         this.lastQuaternion = null
         this.lastDistance = null
-        this.targetPosition = null
-        this.targetQuaternion = null
+        this.imuOrientationBase = null
         this.imuHistory.clear()
+        this.isTracking = false
         console.log('[Renderer] Pose reset')
     }
 
@@ -437,46 +447,40 @@ class ModelRenderer {
         if (!this.renderer || !this.scene || !this.camera) return
 
         const now = performance.now()
-        const sinceVision = now - this.lastVisionTime
+        const dt = this._lastRenderTime ? Math.min((now - this._lastRenderTime) / 1000, 0.1) : 0
+        this._lastRenderTime = now
 
-        // Apply IMU prediction / Dead Reckoning (6DoF)
-        const canPredict = this.imuPredictionEnabled && this.imuManager && this.imuManager.isActive && this.imuOrientationBase
-        const shouldShow = this.isTracking && (sinceVision < this.deadReckonLimit)
+        if (this.isTracking) {
+            const sinceVision = now - this.lastVisionTime
 
-        if (canPredict && shouldShow) {
-            const dt = sinceVision / 1000 // seconds
+            if (sinceVision > this.deadReckonLimit) {
+                // Vision has been gone too long - actually lose tracking
+                this.hide()
+                this.resetPose()
+            } else if (this.lastPosition && this.targetPosition) {
+                // 1. Time-based smoothing toward the latest vision pose
+                //    (frame-rate independent: alpha = 1 - exp(-dt/tau))
+                const aPos = 1 - Math.exp(-dt / this.positionTau)
+                const aRot = 1 - Math.exp(-dt / this.rotationTau)
+                this.lastPosition.lerp(this.targetPosition, aPos)
+                this.lastQuaternion.slerp(this.targetQuaternion, aRot)
 
-            // --- 1. ROTATIONAL PREDICTION (Physics Correct) ---
-            const q = this.imuManager.rawQuaternion || this.imuManager.quaternion
-            const currentIMU = new THREE.Quaternion(q.x, q.y, q.z, q.w)
+                // 2. IMU rotation prediction on top of the smoothed pose
+                let renderQuaternion = this.lastQuaternion
+                if (this.imuPredictionEnabled && this.imuManager &&
+                    this.imuManager.isActive && this.imuOrientationBase) {
+                    const q = this.imuManager.rawQuaternion || this.imuManager.quaternion
+                    const currentIMU = new THREE.Quaternion(q.x, q.y, q.z, q.w)
 
-            // LOCAL Delta = inv(Base) * Current
-            const localDelta = this.imuOrientationBase.clone().invert().multiply(currentIMU)
+                    // LOCAL delta since the last vision frame: inv(base) * current
+                    const localDelta = this.imuOrientationBase.clone().invert().multiply(currentIMU)
+                    renderQuaternion = this.lastQuaternion.clone().multiply(localDelta)
+                }
 
-            // Pose = lastVision * localDelta
-            const projectedQuaternion = this.lastQuaternion.clone().multiply(localDelta)
-            this.camera.quaternion.copy(projectedQuaternion)
-
-            // --- 2. TRANSLATIONAL PREDICTION (Inertial) ---
-            // x = xo + v*dt
-            if (this.imuManager.linVel && this.imuManager.linVel.length() > 0.01) {
-                const velocityWorld = this.imuManager.linVel.clone()
-
-                // Accelerometers measure in local phone frame. 
-                // We must project that velocity into the world frame using the device orientation.
-                // Note: currentIMU is the phone's orientation relative to Earth.
-                velocityWorld.applyQuaternion(projectedQuaternion)
-
-                const translationDelta = velocityWorld.multiplyScalar(dt)
-                this.camera.position.addVectors(this.lastPosition, translationDelta)
-            } else {
                 this.camera.position.copy(this.lastPosition)
+                this.camera.quaternion.copy(renderQuaternion)
+                this.lastDistance = this.lastPosition.length()
             }
-
-            // Ensure model is visible during dead reckoning
-            if (this.modelContainer) this.modelContainer.visible = true
-        } else if (!shouldShow) {
-            this.hide()
         }
 
         this.renderer.render(this.scene, this.camera)
@@ -501,7 +505,7 @@ class ModelRenderer {
     }
 
     getFOV() {
-        return this.fov
+        return this.camera ? this.camera.fov : this.baseFov
     }
 }
 

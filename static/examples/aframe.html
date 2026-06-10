@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>WebAR SDK - A-Frame Example</title>
+  <script src="/static/sdk/vendor/aframe.min.js"></script>
+  <script src="/static/js/camera-intrinsics.js"></script>
+  <script src="/static/js/device-motion.js"></script>
+  <script src="/static/sdk/core/fusion.js"></script>
+  <script src="/static/sdk/webar-sdk.js"></script>
+  <script src="/static/sdk/adapters/aframe-webar.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    a-scene { position: absolute; inset: 0; }
+    #startOverlay {
+      position: absolute; inset: 0; z-index: 10;
+      display: flex; flex-direction: column; gap: 16px;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.92); color: #fff;
+      font-family: sans-serif;
+    }
+    #startOverlay.hidden { display: none; }
+    #startBtn {
+      padding: 14px 36px; font-size: 17px; font-weight: 600;
+      border: none; border-radius: 28px; color: #fff;
+      background: linear-gradient(135deg, #00c870, #00a060); cursor: pointer;
+    }
+    #status { color: #999; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="startOverlay">
+    <h2>WebAR + A-Frame</h2>
+    <div id="status">Loading vision engine…</div>
+    <button id="startBtn" disabled>Start AR</button>
+  </div>
+
+  <a-scene
+    webar="targets: /static/assets/ranger-base-image.webart, /static/assets/ranger-base-image.jpg"
+    renderer="alpha: true; antialias: true"
+    vr-mode-ui="enabled: false"
+    embedded
+  >
+    <a-entity webar-target>
+      <!-- Content anchored to the target: origin = target center,
+           Z points out of the image toward the viewer, units = meters -->
+      <a-box position="0 0 0.10" depth="0.2" width="0.2" height="0.2"
+             rotation="0 0 0" color="#4CC3D9" opacity="0.9"></a-box>
+      <a-torus position="0 0 0.30" radius="0.12" radius-tubular="0.02"
+               color="#EF2D5E"></a-torus>
+      <a-plane width="0.667" height="1.0" color="#00ff88" opacity="0.15"></a-plane>
+    </a-entity>
+    <a-entity camera="fov: 60" look-controls="enabled: false" wasd-controls="enabled: false"></a-entity>
+  </a-scene>
+
+  <script>
+    const scene = document.querySelector('a-scene')
+    const overlay = document.getElementById('startOverlay')
+    const btn = document.getElementById('startBtn')
+    const status = document.getElementById('status')
+
+    scene.addEventListener('webar-ready', (e) => {
+      status.textContent = 'Engine ready (' + (e.detail.compiled ? 'compiled .webart' : 'image') + ' target)'
+      btn.disabled = false
+    })
+    scene.addEventListener('webar-error', (e) => {
+      status.textContent = 'Error: ' + (e.detail.error && e.detail.error.message)
+    })
+    scene.addEventListener('webar-target-found', () => { status.textContent = 'Tracking' })
+    scene.addEventListener('webar-target-lost', () => { status.textContent = 'Searching…' })
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true
+      status.textContent = 'Starting camera…'
+      try {
+        await scene.systems.webar.startCamera()
+        overlay.classList.add('hidden')
+      } catch (e) {
+        status.textContent = 'Camera failed: ' + e.message
+        btn.disabled = false
+      }
+    })
+  </script>
+</body>
+</html>

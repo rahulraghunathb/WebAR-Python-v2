@@ -1,0 +1,19 @@
+{
+  "name": "@hustle/webar-sdk",
+  "version": "0.3.0",
+  "description": "Client-side WebAR image tracking: detect-then-track vision pipeline (OpenCV WASM in a Web Worker) with latency-compensated vision+IMU fusion. No server in the frame loop.",
+  "main": "webar-sdk.js",
+  "files": [
+    "webar-sdk.js",
+    "core/fusion.js",
+    "vision/vision-worker.js",
+    "vision/pipeline.js",
+    "vision/webart-format.js",
+    "vendor/opencv.js",
+    "adapters/aframe-webar.js",
+    "README.md"
+  ],
+  "keywords": ["webar", "augmented-reality", "image-tracking", "computer-vision", "wasm", "aframe"],
+  "license": "UNLICENSED",
+  "browser": "webar-sdk.js"
+}

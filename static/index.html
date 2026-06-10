@@ -388,8 +388,32 @@
     <script src="/static/js/camera-intrinsics.js"></script>
     <script src="/static/js/device-motion.js"></script>
     <script src="/static/js/model-renderer.js"></script>
+    <script src="/static/sdk/core/fusion.js"></script>
     <script src="/static/sdk/webar-sdk.js"></script>
     <script>
+      // ---- Remote debug logging (phones have no devtools) ----
+      // Every lifecycle step and error is POSTed to the server log.
+      function rlog(stage, detail) {
+        try {
+          fetch("/client-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              stage: stage,
+              detail: String(detail === undefined ? "" : detail).slice(0, 600),
+            }),
+            keepalive: true,
+          }).catch(function () {})
+        } catch (e) {}
+      }
+      rlog("page-load", navigator.userAgent)
+      window.addEventListener("error", function (e) {
+        rlog("js-error", e.message + " @ " + (e.filename || "").split("/").pop() + ":" + e.lineno)
+      })
+      window.addEventListener("unhandledrejection", function (e) {
+        rlog("promise-rejection", e.reason && (e.reason.stack || e.reason.message) || e.reason)
+      })
+
       /**
        * WebAR Application
        * Client-side 6DoF image tracking: all vision runs in a Web Worker
@@ -403,10 +427,23 @@
           this.modelRenderer = new ModelRenderer("threeCanvas")
           this.imuManager = new DeviceMotionManager()
 
-          // Client-side vision engine
+          // Phase 2: latency-compensated vision+IMU fusion (owns smoothing,
+          // prediction and loss handling; renderer delegates to it)
+          this.fusion = new FusionEngine()
+          this.modelRenderer.setFusionEngine(this.fusion)
+
+          // Client-side vision engine.
+          // Target precedence: ?target=<url> query param, else the compiled
+          // .webart (instant load), else the raw image (in-worker compile).
+          const customTarget = new URLSearchParams(location.search).get("target")
           this.sdk = new WebARSDK({
             video: document.getElementById("videoElement"),
-            targetUrl: "/static/assets/ranger-base-image.jpg",
+            targetUrl: customTarget
+              ? [customTarget]
+              : [
+                  "/static/assets/ranger-base-image.webart",
+                  "/static/assets/ranger-base-image.jpg",
+                ],
             intrinsicsProvider: this.intrinsicsManager,
             maxDimension: 480,
           })
@@ -507,11 +544,17 @@
 
           this.sdk.on("error", (err) => {
             console.error("[App] SDK error:", err)
+            rlog("sdk-error", err && (err.stack || err.message) || err)
           })
 
           try {
+            rlog("engine-init-start", "fetching target + booting worker")
             const info = await this.sdk.start()
             console.log("[App] Vision engine ready:", info)
+            rlog("engine-ready", JSON.stringify(info))
+            if (info.physical) {
+              this.modelRenderer.setTargetSize(info.physical[0], info.physical[1])
+            }
             this.statusDot.classList.add("connected")
             engineEl.textContent = "✓ Vision Engine (WASM)"
             engineEl.classList.add("granted")
@@ -519,6 +562,7 @@
             this.startBtn.disabled = false
           } catch (err) {
             console.error("[App] Vision engine failed:", err)
+            rlog("engine-FAILED", err && (err.stack || err.message) || err)
             engineEl.textContent = "✗ Vision Engine failed"
             engineEl.classList.add("denied")
             this.startStatus.textContent = "Engine failed: " + err.message
@@ -527,6 +571,33 @@
 
         handleResult(data) {
           this.debug = data.debug || {}
+
+          // Remote debug: first result, first detection, then stats every 5s
+          if (!this._loggedFirstResult) {
+            this._loggedFirstResult = true
+            rlog("first-result", JSON.stringify(this.debug))
+          }
+          if (data.detected && !this._loggedFirstDetection) {
+            this._loggedFirstDetection = true
+            rlog("first-DETECTION", JSON.stringify(this.debug))
+          }
+          const now = performance.now()
+          if (!this._lastStatLog || now - this._lastStatLog > 5000) {
+            this._lastStatLog = now
+            rlog("stats", JSON.stringify({
+              detected: data.detected,
+              state: this.debug.state,
+              mode: this.debug.mode,
+              keypoints: this.debug.keypoints,
+              inliers: this.debug.inliers,
+              proc_ms: this.debug.proc_ms,
+              visionFps: this.sdk.stats.fps,
+              captureMs: this.sdk.stats.captureMs,
+              renderFps: this.fps,
+              imu: this.imuManager.isActive,
+              imuData: this.imuManager.hasData(),
+            }))
+          }
 
           if (data.detected && data.pose) {
             this.pose = data.pose
@@ -561,9 +632,11 @@
 
         async start() {
           try {
+            rlog("start-tapped")
             // Request IMU permission first (MUST be in user gesture handler for iOS)
             this.startStatus.textContent = "Requesting motion sensors..."
             const imuGranted = await this.imuManager.requestPermission()
+            rlog("imu-permission", imuGranted ? "granted" : "denied/unavailable")
 
             // Update permission UI for IMU
             const motionEl = document.getElementById("permMotion")
@@ -585,6 +658,7 @@
 
             // Start camera with optimal settings
             await this.cameraManager.start()
+            rlog("camera-started", this.video.videoWidth + "x" + this.video.videoHeight)
 
             // Wait for video to be ready
             await new Promise((resolve) => {
@@ -645,6 +719,7 @@
             )
           } catch (e) {
             console.error("Start failed:", e)
+            rlog("start-FAILED", e && (e.stack || e.message) || e)
             this.startStatus.textContent = "Failed: " + e.message
           }
         }
@@ -726,11 +801,17 @@
           // FPS
           document.getElementById("infoFps").textContent = this.fps
 
-          // IMU Status
-          const imuStatus = this.imuManager.isActive ? "Active" : "Inactive"
+          // IMU Status - distinguish "active" from "silently blocked"
+          // (Brave & co. attach listeners fine but never deliver events)
+          const imuBlocked = this.imuManager.isActive && !this.imuManager.hasData()
           const statusEl = document.getElementById("infoImuStatus")
-          statusEl.textContent = imuStatus
-          statusEl.style.color = this.imuManager.isActive ? "#0f0" : "#888"
+          if (imuBlocked) {
+            statusEl.textContent = "BLOCKED (enable motion sensors)"
+            statusEl.style.color = "#fa0"
+          } else {
+            statusEl.textContent = this.imuManager.isActive ? "Active" : "Inactive"
+            statusEl.style.color = this.imuManager.isActive ? "#0f0" : "#888"
+          }
 
           if (this.imuManager.isActive) {
             const orient = this.imuManager.orientation

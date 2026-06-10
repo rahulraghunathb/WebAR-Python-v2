@@ -184,8 +184,68 @@
         const avg = a => (a.reduce((s, v) => s + v, 0) / a.length).toFixed(1)
         log('info', `avg detect: ${avg(detectTimes)}ms | avg track: ${avg(trackTimes)}ms`)
       }
+      worker.terminate()
+
+      // 5. Compiled-target path: boot a fresh worker from the .webart
+      //    binary and verify detection parity (no in-browser compile).
+      await testCompiledTarget(img)
 
       finish()
+    }
+
+    async function testCompiledTarget(img) {
+      let buffer
+      try {
+        const resp = await fetch('/static/assets/ranger-base-image.webart')
+        if (!resp.ok) throw new Error('HTTP ' + resp.status)
+        buffer = await resp.arrayBuffer()
+      } catch (e) {
+        check('.webart fetch', false, String(e))
+        return
+      }
+
+      const t0 = performance.now()
+      const worker = new Worker('/static/sdk/vision/vision-worker.js')
+      const pending = new Map()
+      worker.onmessage = (e) => {
+        const msg = e.data
+        if (msg.type === 'ready') { pending.get('ready')(msg.info); return }
+        if (msg.type === 'error') {
+          log('fail', 'WEBART WORKER ERROR: ' + msg.message)
+          const p = pending.get(msg.id !== undefined ? msg.id : 'ready')
+          if (p) p(null)
+          return
+        }
+        if (msg.type === 'result') {
+          const p = pending.get(msg.id)
+          if (p) { pending.delete(msg.id); p(msg) }
+        }
+      }
+
+      const info = await new Promise((res) => {
+        pending.set('ready', res)
+        worker.postMessage({ type: 'init', targetBuffer: buffer }, [buffer])
+      })
+      const initMs = Math.round(performance.now() - t0)
+      check('.webart init (compiled, no extraction)', info && info.ready && info.compiled,
+        `${initMs}ms, keypoints=${info ? JSON.stringify(info.keypoints) : '-'}`)
+      if (!info) { worker.terminate(); return }
+
+      const compiledResults = []
+      for (let t = 0; t < 6; t++) {
+        const frame = renderFrame(img, t)
+        const r = await new Promise((res) => {
+          pending.set(t + 1, res)
+          worker.postMessage(
+            { type: 'frame', imageData: frame, id: t + 1, intrinsics: INTRINSICS },
+            [frame.data.buffer]
+          )
+        })
+        compiledResults.push(r)
+      }
+      const det = compiledResults.filter(r => r && r.detected && r.pose)
+      check('.webart pipeline detects + poses', det.length >= 5,
+        `${det.length}/6 frames, inliers=${det.length ? det[0].debug.inliers : '-'}`)
       worker.terminate()
     }
 

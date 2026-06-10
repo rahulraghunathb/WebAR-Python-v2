@@ -13,9 +13,9 @@
  *   in : { type:'reset' }
  */
 
-/* global cv, VisionPipeline */
+/* global cv, VisionPipeline, parseWebART */
 
-importScripts('../vendor/opencv.js', './pipeline.js')
+importScripts('../vendor/opencv.js', './webart-format.js', './pipeline.js')
 
 let pipeline = null
 let canvas = null
@@ -77,7 +77,13 @@ self.onmessage = async (e) => {
         if (msg.type === 'init') {
             await cvReady()
             pipeline = new VisionPipeline(msg.config)
-            const info = pipeline.compileTarget(msg.target)
+            let info
+            if (msg.targetBuffer) {
+                // Precompiled .webart: parse + load, no in-browser extraction
+                info = pipeline.loadCompiledTarget(parseWebART(msg.targetBuffer))
+            } else {
+                info = pipeline.compileTarget(msg.target)
+            }
             if (!info.ready) {
                 self.postMessage({ type: 'error', message: 'Target compilation produced no features' })
                 return

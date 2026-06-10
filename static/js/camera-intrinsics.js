@@ -198,30 +198,32 @@ class CameraIntrinsicsManager {
      * @param {number} videoHeight - Native video height in pixels
      */
     initializeFromVideoStream(videoWidth, videoHeight) {
-        // Get device-specific DIAGONAL or effective FOV
-        // Most phone specs list diagonal FOV, but we work with horizontal
-        const fovHorizontalDeg = this._getDeviceHorizontalFOV();
+        // Device FOV database values are for the sensor's LONG axis
+        // (landscape horizontal). The focal length in pixels is
+        // ORIENTATION-INVARIANT, so anchor it to the LONG side of the
+        // delivered frame:
+        //   f = (longSide / 2) / tan(fovLong / 2)
+        // and derive each axis' FOV from the actual dimensions.
+        //
+        // The previous code pinned the 65° landscape FOV to the frame WIDTH;
+        // in portrait the width is the sensor's SHORT axis (~50°), which
+        // inflated fx ~30% and visibly bent every pose solved with it.
+        const fovLongDeg = this._getDeviceHorizontalFOV();
+        const fovLongRad = fovLongDeg * Math.PI / 180;
 
-        // Convert to radians
-        const fovHorizontalRad = fovHorizontalDeg * Math.PI / 180;
+        const longSide = Math.max(videoWidth, videoHeight);
+        const f = (longSide / 2) / Math.tan(fovLongRad / 2);
 
-        // Compute focal length from horizontal FOV
-        // tan(FOV_h / 2) = (width / 2) / fx
-        // fx = (width / 2) / tan(FOV_h / 2)
-        const fx = (videoWidth / 2) / Math.tan(fovHorizontalRad / 2);
-
-        // For mobile cameras, fy = fx (square pixels)
-        const fy = fx;
+        const fx = f;
+        const fy = f;  // square pixels
 
         // Principal point at image center
         const cx = videoWidth / 2;
         const cy = videoHeight / 2;
 
-        // Compute vertical FOV from fy and actual height
-        // CRITICAL: This gives correct vertical FOV based on aspect ratio
-        // tan(FOV_v / 2) = (height / 2) / fy
-        const fovVerticalRad = 2 * Math.atan((videoHeight / 2) / fy);
-        const fovVerticalDeg = fovVerticalRad * 180 / Math.PI;
+        // Per-axis FOVs from the shared focal length
+        const fovHorizontalDeg = 2 * Math.atan((videoWidth / 2) / fx) * 180 / Math.PI;
+        const fovVerticalDeg = 2 * Math.atan((videoHeight / 2) / fy) * 180 / Math.PI;
 
         // Sanity check - vertical FOV should be reasonable (20-80 degrees)
         // If video is portrait, vertical FOV will be larger than horizontal

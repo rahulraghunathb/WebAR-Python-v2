@@ -20,6 +20,8 @@
  */
 
 class WebARSDK {
+    static get version() { return '0.3.0' }
+
     constructor(options) {
         options = options || {}
         this.video = options.video
@@ -71,8 +73,10 @@ class WebARSDK {
         if (!this.video) throw new Error('WebARSDK: video element required')
         if (!this.targetUrl) throw new Error('WebARSDK: targetUrl required')
 
-        // 1. Load and rasterize the target image
-        const targetData = await this._loadTargetImageData(this.targetUrl)
+        // 1. Load the target: precompiled .webart (instant) or image
+        // (compiled in the worker, ~1.2s). targetUrl may be a list of
+        // candidates tried in order - e.g. ['x.webart', 'x.jpg'].
+        const init = await this._loadTarget(this.targetUrl)
 
         // 2. Boot the worker (loads ~11MB WASM once; cached by the browser)
         this.worker = new Worker(this.workerUrl)
@@ -84,12 +88,11 @@ class WebARSDK {
             this._readyReject = reject
         })
 
-        this.worker.postMessage(
-            { type: 'init', target: targetData, config: this.pipelineConfig },
-            [targetData.data.buffer]
-        )
+        init.message.config = this.pipelineConfig
+        this.worker.postMessage(init.message, init.transfer)
 
         const info = await ready
+        info.targetSource = init.source
         this.ready = true
         this.running = true
         this._emit('ready', info)
@@ -97,6 +100,36 @@ class WebARSDK {
         // 3. Start the frame pump
         this._pump()
         return info
+    }
+
+    /** Resolve the first loadable target among the candidates. */
+    async _loadTarget(urls) {
+        const candidates = Array.isArray(urls) ? urls : [urls]
+        let lastErr = null
+        for (const url of candidates) {
+            try {
+                if (/\.webart(\?|$)/i.test(url)) {
+                    const resp = await fetch(url)
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status)
+                    const buffer = await resp.arrayBuffer()
+                    return {
+                        source: url,
+                        message: { type: 'init', targetBuffer: buffer },
+                        transfer: [buffer]
+                    }
+                }
+                const targetData = await this._loadTargetImageData(url)
+                return {
+                    source: url,
+                    message: { type: 'init', target: targetData },
+                    transfer: [targetData.data.buffer]
+                }
+            } catch (e) {
+                lastErr = e
+                console.warn('[WebARSDK] target candidate failed:', url, e.message)
+            }
+        }
+        throw new Error('WebARSDK: no target candidate loaded: ' + (lastErr && lastErr.message))
     }
 
     stop() {

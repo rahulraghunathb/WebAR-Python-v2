@@ -170,6 +170,41 @@ class VisionPipeline {
         }
     }
 
+    /**
+     * Load a precompiled target (parsed .webart, see webart-format.js).
+     * Skips in-browser ORB extraction entirely (~1.2s off init) and uses
+     * the compiler's physical dimensions (which may be real printed size).
+     */
+    loadCompiledTarget(parsed) {
+        this.targetW = parsed.imgW
+        this.targetH = parsed.imgH
+        this.physW = parsed.physW
+        this.physH = parsed.physH
+
+        const counts = []
+        for (const lv of parsed.levels) {
+            if (lv.count < 4) continue
+            // Descriptors: count x 32 CV_8U Mat for the BF matcher
+            const desc = new cv.Mat(lv.count, 32, cv.CV_8U)
+            desc.data.set(lv.desc)
+            // Keypoints arrive already in full-res target coords
+            this.targetLevels.push({
+                scale: lv.scale,
+                pts: new Float32Array(lv.pts),
+                desc
+            })
+            counts.push(lv.count)
+        }
+
+        return {
+            ready: this.targetLevels.length > 0,
+            compiled: true,
+            keypoints: counts,
+            scales: this.targetLevels.map(l => l.scale),
+            physical: [this.physW, this.physH]
+        }
+    }
+
     // ================= Intrinsics =================
 
     setIntrinsics(fx, fy, cx, cy) {
@@ -208,11 +243,20 @@ class VisionPipeline {
         if (this.state === PipelineState.TRACKING && this.prevGray) {
             result = this._trackStep(gray)
 
-            // Periodic re-anchoring / replenishment while tracking
-            if (result && (this.framesSinceRefresh >= this.cfg.refreshInterval ||
-                           result.trackPoints < this.cfg.refreshPointThreshold)) {
-                const det = this._detectStep(gray)
-                if (det) { result = det; this.framesSinceRefresh = 0 }
+            // Periodic re-anchoring / replenishment while tracking.
+            // Full detection costs 100-500ms on phones (a visible hitch),
+            // so when tracking is RICH (plenty of inliers = negligible
+            // drift) stretch the interval 3x - re-anchor mainly when the
+            // point set is actually decaying.
+            if (result) {
+                const needPoints = result.trackPoints < this.cfg.refreshPointThreshold
+                const interval = result.nInliers >= 45
+                    ? this.cfg.refreshInterval * 3
+                    : this.cfg.refreshInterval
+                if (needPoints || this.framesSinceRefresh >= interval) {
+                    const det = this._detectStep(gray)
+                    if (det) { result = det; this.framesSinceRefresh = 0 }
+                }
             }
         }
 

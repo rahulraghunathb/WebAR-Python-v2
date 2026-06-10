@@ -73,6 +73,11 @@ class ModelRenderer {
         // IMU manager reference (set externally)
         this.imuManager = null
 
+        // Phase 2 fusion engine (set externally). When present it OWNS
+        // smoothing, IMU prediction, latency compensation and loss handling;
+        // the legacy paths below remain as the no-fusion fallback.
+        this.fusion = null
+
         // Render clock
         this._lastRenderTime = 0
 
@@ -317,6 +322,10 @@ class ModelRenderer {
      * on every missed frame which caused flicker and fought the dead-reckoner.
      */
     updatePose(pose) {
+        if (this.fusion) {
+            this.fusion.pushVisionPose(pose)
+            return
+        }
         if (!pose || !pose.matrix) return
 
         const m = pose.matrix
@@ -388,6 +397,10 @@ class ModelRenderer {
      * the model actually disappears, so brief misses don't flicker.
      */
     notifyLost() {
+        if (this.fusion) {
+            this.fusion.notifyMiss()
+            return
+        }
         if (!this.isTracking) this.hide()
     }
 
@@ -396,13 +409,39 @@ class ModelRenderer {
      */
     setIMUManager(imuManager) {
         this.imuManager = imuManager
+        if (this.fusion) this.fusion.setIMUProvider(imuManager)
         console.log('[Renderer] IMU manager connected')
+    }
+
+    /**
+     * Connect the Phase 2 fusion engine (takes over pose filtering)
+     */
+    setFusionEngine(fusion) {
+        this.fusion = fusion
+        if (this.imuManager) fusion.setIMUProvider(this.imuManager)
+        console.log('[Renderer] Fusion engine connected')
+    }
+
+    /**
+     * Match the debug plane to the target's physical size (meters).
+     * The plane is a unit square; without this it misrepresents any
+     * non-square target as "misaligned".
+     */
+    setTargetSize(widthM, heightM) {
+        if (this.debugObjects.targetPlane && widthM > 0 && heightM > 0) {
+            this.debugObjects.targetPlane.scale.set(widthM, heightM, 1)
+            console.log('[Renderer] Target plane sized:', widthM.toFixed(3) + 'x' + heightM.toFixed(3) + 'm')
+        }
     }
 
     /**
      * Store IMU state for a frame being sent (synchronization)
      */
     saveIMUBaseline(id, quat) {
+        if (this.fusion) {
+            this.fusion.saveSnapshot(id, quat, performance.now())
+            return
+        }
         this.imuHistory.set(id, { ...quat })
 
         // Safety cap on history size
@@ -416,6 +455,7 @@ class ModelRenderer {
      * Full pose/smoothing reset (also used when the dead-reckon window expires)
      */
     resetPose() {
+        if (this.fusion) this.fusion.reset()
         this.targetPosition = null
         this.targetQuaternion = null
         this.lastPosition = null
@@ -445,6 +485,22 @@ class ModelRenderer {
 
     render() {
         if (!this.renderer || !this.scene || !this.camera) return
+
+        // Fusion path: the engine propagates IMU + velocity and absorbs
+        // vision corrections internally; we just apply its state.
+        if (this.fusion) {
+            const st = this.fusion.getRenderPose(performance.now())
+            if (st.tracking) {
+                this.camera.position.set(st.position.x, st.position.y, st.position.z)
+                this.camera.quaternion.set(st.quaternion.x, st.quaternion.y, st.quaternion.z, st.quaternion.w)
+                this.lastDistance = this.camera.position.length()
+                this.show()
+            } else {
+                this.hide()
+            }
+            this.renderer.render(this.scene, this.camera)
+            return
+        }
 
         const now = performance.now()
         const dt = this._lastRenderTime ? Math.min((now - this._lastRenderTime) / 1000, 0.1) : 0

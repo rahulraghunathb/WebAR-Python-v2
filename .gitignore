@@ -40,3 +40,5 @@ Thumbs.db
 # Web
 node_modules/
 .npm
+webar-server.log
+._video_frames/

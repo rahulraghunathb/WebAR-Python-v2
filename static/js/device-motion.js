@@ -37,6 +37,11 @@ class DeviceMotionManager {
         // Smoothing
         this.smoothingFactor = 0.3  // Lower = smoother
 
+        // Health: listeners can be attached while a privacy-focused browser
+        // (Brave etc.) silently blocks the events. Count real samples so the
+        // UI/fusion can distinguish "active" from "blocked".
+        this.eventCount = 0
+
         // 6DoF - Translation
         this.acceleration = { x: 0, y: 0, z: 0 }
         this.velocity = { x: 0, y: 0, z: 0 }
@@ -130,6 +135,12 @@ class DeviceMotionManager {
      * FOLLOWS W3C SPEC: Intrinsic ZXY order (Alpha, Beta, Gamma)
      */
     handleOrientation(event) {
+        // Browsers with sensor blocking (e.g. Brave shields) fire either no
+        // events or events with null values - only count REAL data so the
+        // app can tell "active" apart from "silently blocked".
+        if (event.alpha === null && event.beta === null && event.gamma === null) return
+        this.eventCount++
+
         // Get orientation angles (in degrees)
         const alpha = event.alpha || 0  // 0-360 (Z)
         const beta = event.beta || 0    // -180 to 180 (X)
@@ -270,6 +281,14 @@ class DeviceMotionManager {
      */
     isStable(thresholdDegrees = 5) {
         return this.getRotationMagnitude() < thresholdDegrees
+    }
+
+    /**
+     * True once at least one REAL orientation sample has arrived.
+     * False while listeners are attached but the browser blocks the data.
+     */
+    hasData() {
+        return this.eventCount > 0
     }
 
     // ========== Math Utilities ==========

@@ -6,7 +6,7 @@ import time
 
 import cv2
 import numpy as np
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, request
 from flask_socketio import SocketIO, emit
 
 from src.detectors import ORBDetector
@@ -16,6 +16,14 @@ from src.processor import ImageProcessor
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        # File copy so phone-side diagnostics survive and can be inspected
+        logging.FileHandler(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "webar-server.log"),
+            encoding="utf-8",
+        ),
+    ],
 )
 log = logging.getLogger("webar")
 
@@ -99,12 +107,26 @@ threading.Thread(target=frame_worker, daemon=True).start()
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    # send_static_file, NOT render_template: index.html has no Jinja in it,
+    # and with debug=False Jinja caches the compiled template at first
+    # render - the page would be frozen at server-boot content forever.
+    return app.send_static_file("index.html")
 
 
 @app.route("/status")
 def status():
     return jsonify(base_processor.get_target_info())
+
+
+@app.route("/client-log", methods=["POST"])
+def client_log():
+    """Remote debugging: phones POST their lifecycle/errors here."""
+    data = request.get_json(silent=True) or {}
+    log.info("[CLIENT %s] %s | %s",
+             request.remote_addr, data.get("stage", "?"), data.get("detail", ""))
+    if data.get("ua"):
+        log.info("[CLIENT %s] ua: %s", request.remote_addr, data["ua"])
+    return "", 204
 
 
 @socketio.on("connect")
@@ -242,6 +264,7 @@ def process_frame(session: ClientSession, data, frame_id):
 
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
     socketio.run(
-        app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True
+        app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True
     )

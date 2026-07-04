@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebAR SDK - Mat.data staleness probe</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    .pass { color: #0f0; } .fail { color: #f44; } .info { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Mat.data staleness across WASM heap growth</h1>
+  <p class="info">Replicates vision-worker toGray(): persistent rgba Mat updated via
+  .data.set() each "frame", with big allocations in between to force heap growth.</p>
+  <div id="log"></div>
+
+  <script>
+    const logEl = document.getElementById('log')
+    function log(cls, msg) {
+      const d = document.createElement('div')
+      d.className = cls
+      d.textContent = msg
+      logEl.appendChild(d)
+    }
+
+    const build = new URLSearchParams(location.search).get('build') || 'opencv-slim.js'
+    const script = document.createElement('script')
+    script.src = '/static/sdk/vendor/' + build
+    script.onload = () => {
+      log('info', 'loaded ' + build)
+      if (typeof cv === 'undefined') { log('fail', 'cv undefined'); return finish(1) }
+      if (cv.Mat) run()
+      else if (typeof cv.then === 'function') cv.then((mod) => { window.cv = mod; run() })
+      else cv.onRuntimeInitialized = () => run()
+    }
+    script.onerror = () => { log('fail', 'failed to load ' + build); finish(1) }
+    document.head.appendChild(script)
+
+    function heapSize() {
+      try { return cv.HEAPU8 ? cv.HEAPU8.buffer.byteLength : -1 } catch (e) { return -1 }
+    }
+
+    function run() {
+      try {
+        const W = 480, H = 360
+        const rgba = new cv.Mat(H, W, cv.CV_8UC4)
+        const gray = new cv.Mat()
+        const px = new Uint8Array(W * H * 4)
+        let failures = 0
+
+        log('info', `initial heap: ${(heapSize() / 1048576).toFixed(1)}MB`)
+
+        const hogs = []
+        for (let i = 1; i <= 10; i++) {
+          // uniform gray level i*20 in RGB, opaque alpha
+          for (let p = 0; p < W * H; p++) {
+            px[p * 4] = i * 20; px[p * 4 + 1] = i * 20; px[p * 4 + 2] = i * 20; px[p * 4 + 3] = 255
+          }
+          rgba.data.set(px)
+          cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY)
+          // Read back through a FRESH wasm-side copy to dodge JS view issues
+          const snap = gray.clone()
+          const got = snap.data[1000]
+          snap.delete()
+          const ok = Math.abs(got - i * 20) <= 1
+          if (!ok) failures++
+          log(ok ? 'pass' : 'fail',
+            `iter ${i}: wrote ${i * 20}, gray reads ${got} | heap=${(heapSize() / 1048576).toFixed(1)}MB ${ok ? 'OK' : 'STALE'}`)
+          // Force heap growth: allocate and keep a 16MB Mat
+          hogs.push(new cv.Mat(2048, 2048, cv.CV_32FC1))
+        }
+        hogs.forEach(m => m.delete())
+
+        // --- clone aliasing probe (vision-worker prevGray pattern) ---
+        // Fill gray with A via cvtColor, clone it, overwrite gray with B,
+        // then check the clone still holds A.
+        for (let p = 0; p < W * H; p++) {
+          px[p * 4] = 50; px[p * 4 + 1] = 50; px[p * 4 + 2] = 50; px[p * 4 + 3] = 255
+        }
+        rgba.data.set(px)
+        cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY)
+        const snapA = gray.clone()
+        const offA = snapA.data.byteOffset, offG = gray.data.byteOffset
+        for (let p = 0; p < W * H; p++) {
+          px[p * 4] = 200; px[p * 4 + 1] = 200; px[p * 4 + 2] = 200; px[p * 4 + 3] = 255
+        }
+        rgba.data.set(px)
+        cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY)
+        const cloneVal = snapA.clone().data[1000]
+        const aliased = Math.abs(cloneVal - 200) <= 1
+        log(aliased ? 'fail' : 'pass',
+          `clone alias probe: clone reads ${cloneVal} after source overwritten to 200 ` +
+          `(expect 50) | clone@${offA} src@${offG} ${aliased ? 'ALIASED' : 'independent'}`)
+        if (aliased) failures++
+        snapA.delete()
+
+        // --- copyTo probe (the alias-safe alternative) ---
+        for (let p = 0; p < W * H; p++) {
+          px[p * 4] = 50; px[p * 4 + 1] = 50; px[p * 4 + 2] = 50; px[p * 4 + 3] = 255
+        }
+        rgba.data.set(px)
+        cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY)
+        const snapB = new cv.Mat()
+        gray.copyTo(snapB)
+        const offB = snapB.data.byteOffset
+        for (let p = 0; p < W * H; p++) {
+          px[p * 4] = 200; px[p * 4 + 1] = 200; px[p * 4 + 2] = 200; px[p * 4 + 3] = 255
+        }
+        rgba.data.set(px)
+        cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY)
+        const copyVal = snapB.clone().data[1000]
+        const copyAliased = Math.abs(copyVal - 200) <= 1
+        log(copyAliased ? 'fail' : 'pass',
+          `copyTo probe: copy reads ${copyVal} after source overwritten to 200 ` +
+          `(expect 50) | copy@${offB} src@${offG} ${copyAliased ? 'ALIASED' : 'independent'}`)
+        if (copyAliased) failures++
+        snapB.delete()
+
+        rgba.delete(); gray.delete()
+        log(failures ? 'fail' : 'pass', `${failures ? failures + ' failures' : 'all probes clean'}`)
+        finish(failures ? 1 : 0)
+      } catch (e) {
+        log('fail', 'FATAL: ' + (e.stack || e))
+        finish(1)
+      }
+    }
+
+    function finish(failed) {
+      window.__TEST_DONE__ = { passed: failed ? 0 : 1, failed, runtime: build }
+    }
+  </script>
+</body>
+</html>

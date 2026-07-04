@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>WebAR SDK - WebXR World Tracking (Phase 4)</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="/static/sdk/core/world-tracking.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; color: #fff;
+                 font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+    #intro { position: absolute; inset: 0; display: flex; flex-direction: column;
+             align-items: center; justify-content: center; gap: 14px; padding: 24px;
+             background: #000; z-index: 5; }
+    #intro.hidden { display: none; }
+    h2 { margin: 0; color: #00c870; }
+    #caps { font-size: 13px; line-height: 1.9; color: #bbb; background: #111;
+            border-radius: 12px; padding: 14px 18px; min-width: 260px; }
+    #caps b { color: #fff; }
+    .ok { color: #00c870; } .no { color: #f66; }
+    #enterBtn { padding: 14px 38px; font-size: 17px; font-weight: 600; border: none;
+                border-radius: 28px; color: #fff; cursor: pointer;
+                background: linear-gradient(135deg, #00c870, #00a060); }
+    #enterBtn:disabled { opacity: 0.4; }
+    #note { font-size: 12px; color: #777; max-width: 300px; text-align: center; }
+    /* DOM overlay HUD (visible inside the AR session) */
+    #hud { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 10; }
+    #hud .pill { position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+                 background: rgba(0,0,0,0.65); border-radius: 18px; padding: 8px 18px;
+                 font-size: 13px; }
+    #hud #exitBtn { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+                    pointer-events: auto; padding: 10px 26px; border-radius: 22px;
+                    border: 1px solid #555; background: rgba(0,0,0,0.6); color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="intro">
+    <h2>WebXR World Tracking</h2>
+    <div id="caps">Probing capabilities…</div>
+    <button id="enterBtn" disabled>Enter AR</button>
+    <div id="note">Requires an ARCore Android device in Chrome (HTTPS).
+      Native image tracking additionally needs chrome://flags/#webxr-incubations.
+      Tap a surface to place the model; if image tracking is granted, the model
+      anchors to the poster instead.</div>
+  </div>
+
+  <div id="hud">
+    <div class="pill" id="hudStatus">Move the phone to find surfaces…</div>
+    <button id="exitBtn">Exit AR</button>
+  </div>
+
+  <script>
+    // Remote telemetry (same endpoint as the main app - phones have no devtools)
+    function rlog(stage, detail) {
+      try {
+        fetch('/client-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stage: 'webxr:' + stage,
+            detail: String(detail === undefined ? '' : detail).slice(0, 600)
+          }),
+          keepalive: true
+        }).catch(function () {})
+      } catch (e) {}
+    }
+    rlog('page-load', navigator.userAgent)
+    window.addEventListener('error', (e) =>
+      rlog('js-error', e.message + ' @ ' + (e.filename || '').split('/').pop() + ':' + e.lineno))
+    window.addEventListener('unhandledrejection', (e) =>
+      rlog('promise-rejection', e.reason && (e.reason.stack || e.reason.message) || e.reason))
+
+    const capsEl = document.getElementById('caps')
+    const enterBtn = document.getElementById('enterBtn')
+    const intro = document.getElementById('intro')
+    const hud = document.getElementById('hud')
+    const hudStatus = document.getElementById('hudStatus')
+
+    let renderer, scene, camera, reticle, model, modelPlaced = false
+    let backend = null
+
+    function capRow(name, ok, extra) {
+      return `<b>${name}</b>: <span class="${ok ? 'ok' : 'no'}">${ok ? 'yes' : 'no'}</span>${extra ? ' <span style="color:#666">' + extra + '</span>' : ''}<br>`
+    }
+
+    async function probe() {
+      const caps = await WorldTracking.detectCapabilities()
+      rlog('capabilities', JSON.stringify(caps))
+      capsEl.innerHTML =
+        capRow('WebXR', caps.webxr) +
+        capRow('immersive-ar (ARCore)', caps.immersiveAr) +
+        capRow('hit-test', caps.hitTest) +
+        capRow('dom-overlay', caps.domOverlay) +
+        capRow('image-tracking', caps.imageTracking, caps.imageTracking ? '' : '(needs webxr-incubations flag)') +
+        (caps.reason ? `<span style="color:#f80">${caps.reason}</span>` : '')
+      enterBtn.disabled = !caps.immersiveAr
+      if (!caps.immersiveAr) {
+        enterBtn.textContent = 'AR not available here'
+      }
+      return caps
+    }
+
+    function setupScene() {
+      scene = new THREE.Scene()
+      camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 50)
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+      renderer.setPixelRatio(devicePixelRatio)
+      renderer.setSize(innerWidth, innerHeight)
+      document.body.appendChild(renderer.domElement)
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.7))
+      const dir = new THREE.DirectionalLight(0xffffff, 0.8)
+      dir.position.set(0.5, 2, 1)
+      scene.add(dir)
+
+      // Hit-test reticle
+      reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.07, 0.09, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00c870 })
+      )
+      reticle.matrixAutoUpdate = false
+      reticle.visible = false
+      scene.add(reticle)
+
+      // Model (same asset as the main app)
+      new THREE.GLTFLoader().load('/static/assets/ranger-3d-model.glb', (gltf) => {
+        const inner = gltf.scene
+        const box = new THREE.Box3().setFromObject(inner)
+        const size = box.getSize(new THREE.Vector3())
+        const center = box.getCenter(new THREE.Vector3())
+        inner.position.set(-center.x, -box.min.y, -center.z)  // feet at local origin
+        model = new THREE.Group()
+        model.add(inner)
+        const s = 0.35 / Math.max(size.x, size.y, size.z)
+        model.scale.setScalar(s)
+        model.visible = false
+        scene.add(model)
+      })
+    }
+
+    async function enterAR() {
+      enterBtn.disabled = true
+      setupScene()
+
+      // Target bitmap for native image tracking (poster ~0.3m wide on screen)
+      let trackedImage = null
+      try {
+        const blob = await (await fetch('/static/assets/ranger-base-image.jpg')).blob()
+        trackedImage = { bitmap: await createImageBitmap(blob), widthInMeters: 0.3 }
+      } catch (e) { /* image tracking simply won't be requested */ }
+
+      backend = new WebXRBackend({ trackedImage, domOverlayRoot: hud })
+      backend.on('warning', (w) => { hudStatus.textContent = w })
+      backend.on('end', () => {
+        hud.style.display = 'none'
+        intro.classList.remove('hidden')
+        enterBtn.disabled = false
+        renderer.setAnimationLoop(null)
+      })
+
+      try {
+        await backend.start(renderer)
+        rlog('session-started', JSON.stringify({
+          imageTracking: backend.imageTrackingActive,
+          domOverlay: !!(backend.session.domOverlayState)
+        }))
+      } catch (e) {
+        rlog('session-FAILED', e && (e.stack || e.message) || e)
+        capsEl.innerHTML += `<span class="no">requestSession failed: ${e.message}</span>`
+        enterBtn.disabled = false
+        return
+      }
+
+      intro.classList.add('hidden')
+      hud.style.display = 'block'
+      hudStatus.textContent = backend.imageTrackingActive
+        ? 'World tracking + image tracking active'
+        : 'Move the phone, then tap to place'
+
+      // Tap to place (when not image-anchored)
+      backend.session.addEventListener('select', () => {
+        if (model && reticle.visible && !backend.lastImagePose) {
+          model.position.setFromMatrixPosition(reticle.matrix)
+          model.visible = true
+          modelPlaced = true
+          hudStatus.textContent = 'Placed. World-anchored by ARCore.'
+          rlog('model-placed', 'hit-test tap')
+        }
+      })
+
+      let loggedImageAnchor = false
+
+      document.getElementById('exitBtn').addEventListener('click', () => backend.stop())
+
+      renderer.setAnimationLoop((t, frame) => {
+        const { hitMatrix, imagePose } = backend.processFrame(frame)
+
+        if (imagePose && model) {
+          // Anchor to the tracked poster: image space is X-right/Y-up in the
+          // image plane, Z out of the image - same convention as our SDK, so
+          // the model stands out of the poster with rotation.x = +90°.
+          const m = new THREE.Matrix4().fromArray(imagePose.matrix)
+          model.position.setFromMatrixPosition(m)
+          model.quaternion.setFromRotationMatrix(m)
+          model.rotateX(Math.PI / 2)
+          model.visible = true
+          reticle.visible = false
+          hudStatus.textContent = 'Anchored to poster (' +
+            (imagePose.emulated ? 'emulated' : 'tracked') + ')'
+          if (!loggedImageAnchor) {
+            loggedImageAnchor = true
+            rlog('image-anchored', JSON.stringify({
+              emulated: imagePose.emulated,
+              measuredWidthM: imagePose.measuredWidthInMeters
+            }))
+          }
+        } else if (hitMatrix) {
+          reticle.matrix.fromArray(hitMatrix)
+          reticle.visible = !modelPlaced
+          if (!modelPlaced) hudStatus.textContent = 'Tap to place'
+        } else if (!modelPlaced) {
+          reticle.visible = false
+        }
+
+        renderer.render(scene, camera)
+      })
+    }
+
+    enterBtn.addEventListener('click', enterAR)
+    probe()
+    window.__CAPS_PROBED__ = probe()  // for automated verification
+  </script>
+</body>
+</html>

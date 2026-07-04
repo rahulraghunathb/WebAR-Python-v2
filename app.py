@@ -1,12 +1,13 @@
 import base64
 import logging
+import mimetypes
 import os
 import threading
 import time
 
 import cv2
 import numpy as np
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit
 
 from src.detectors import ORBDetector
@@ -111,6 +112,29 @@ def index():
     # and with debug=False Jinja caches the compiled template at first
     # render - the page would be frozen at server-boot content forever.
     return app.send_static_file("index.html")
+
+
+def _gzip_static(filename):
+    """Static serving with precompressed support: if <file>.gz exists and
+    the client accepts gzip, serve it with Content-Encoding (the 11MB WASM
+    runtime drops to ~3.4MB over the wire). Generate siblings with:
+    python -c "import gzip,shutil;..." or the build scripts."""
+    if "gzip" in request.headers.get("Accept-Encoding", "").lower():
+        gz_path = os.path.join(app.static_folder, filename + ".gz")
+        if os.path.isfile(gz_path):
+            mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            resp = send_from_directory(
+                app.static_folder, filename + ".gz",
+                mimetype=mime, conditional=True
+            )
+            resp.headers["Content-Encoding"] = "gzip"
+            resp.headers["Vary"] = "Accept-Encoding"
+            return resp
+    return app.send_static_file(filename)
+
+
+# Replace Flask's default static view with the gzip-aware one
+app.view_functions["static"] = _gzip_static
 
 
 @app.route("/status")

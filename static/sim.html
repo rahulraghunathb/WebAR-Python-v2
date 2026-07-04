@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebAR SDK - Simulation Environment (ground-truth, degraded)</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script src="/static/sdk/core/fusion.js"></script>
+  <style>
+    body { font-family: monospace; background: #111; color: #ddd; padding: 16px; margin: 0; }
+    h1 { font-size: 15px; margin: 0 0 8px; }
+    .pass { color: #0f0; } .fail { color: #f44; } .info { color: #888; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    canvas { border: 1px solid #333; image-rendering: pixelated; background: #000; }
+    #controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+      background: #181818; border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+    #controls label { display: inline-flex; flex-direction: column; font-size: 11px; color: #9a9a9a; gap: 3px; }
+    #controls input[type=range] { width: 120px; }
+    #controls .val { color: #0cf; font-weight: 600; }
+    select, button { font-family: monospace; background: #222; color: #ddd; border: 1px solid #3a3a3a;
+      border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+    button.primary { background: #0a5; color: #fff; border-color: #0a5; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    #hud { font-size: 12px; line-height: 1.55; min-width: 230px; }
+    #hud b { color: #fff; }
+    .kv { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #222; padding: 1px 0; }
+    .kv .v { color: #0cf; }
+    #log { margin-top: 12px; font-size: 12px; max-height: 320px; overflow-y: auto;
+      border-top: 1px solid #2a2a2a; padding-top: 8px; }
+    #log div { padding: 1px 0; }
+    .legend { font-size: 11px; color: #888; margin-top: 4px; }
+    .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin: 0 3px 0 8px; }
+  </style>
+</head>
+<body>
+  <h1>WebAR Simulation Environment — real worker, ground truth, configurable degradation</h1>
+
+  <div id="controls">
+    <label>Trajectory
+      <select id="cTraj">
+        <option value="slam">SLAM: orbit → pan away → return → teleport</option>
+        <option value="fastpan">Fast pan (motion-blur stress)</option>
+        <option value="approach">Approach / retreat (scale)</option>
+        <option value="shaky">Shaky hold ("not anchored when moving")</option>
+        <option value="orbit">Orbit loop (continuous)</option>
+      </select>
+    </label>
+    <label>Pixel noise σ <span class="val" id="vNoise">2</span>
+      <input type="range" id="cNoise" min="0" max="25" value="2" /></label>
+    <label>Motion blur <span class="val" id="vBlur">0.1</span>
+      <input type="range" id="cBlur" min="0" max="100" value="10" /></label>
+    <label>Hand shake (mm) <span class="val" id="vShake">1</span>
+      <input type="range" id="cShake" min="0" max="20" value="1" /></label>
+    <label>Exposure drift <span class="val" id="vExpo">0.1</span>
+      <input type="range" id="cExpo" min="0" max="60" value="10" /></label>
+    <label>Gyro noise (°) <span class="val" id="vGyro">0.2</span>
+      <input type="range" id="cGyro" min="0" max="30" value="2" /></label>
+    <label>Vision Hz <span class="val" id="vHz">20</span>
+      <input type="range" id="cHz" min="8" max="45" value="20" /></label>
+    <button id="btnRun" class="primary">▶ Run once (scored)</button>
+    <button id="btnLoop">⟳ Loop (live)</button>
+    <button id="btnStop" disabled>⏸ Stop</button>
+  </div>
+
+  <div class="row">
+    <div>
+      <div class="info">Frame the worker sees (degraded)</div>
+      <canvas id="preview" width="480" height="360"></canvas>
+      <div class="legend">
+        <span class="sw" style="background:#0f0"></span>ground-truth path
+        <span class="sw" style="background:#0cf"></span>raw vision
+        <span class="sw" style="background:#f6a"></span>fused (on-screen)
+        <span class="sw" style="background:#fa0"></span>map points
+      </div>
+    </div>
+    <div>
+      <div class="info">Top-down trajectory (X horizontal, Z toward camera)</div>
+      <canvas id="plot" width="380" height="360"></canvas>
+    </div>
+    <div id="hud">
+      <div class="info">Live</div>
+      <div class="kv"><span>frame</span><span class="v" id="hFrame">-</span></div>
+      <div class="kv"><span>state</span><span class="v" id="hState">-</span></div>
+      <div class="kv"><span>mode</span><span class="v" id="hMode">-</span></div>
+      <div class="kv"><span>map pts / dormant</span><span class="v" id="hMap">-</span></div>
+      <div class="kv"><span>raw pos err</span><span class="v" id="hRawP">-</span></div>
+      <div class="kv"><span>fused pos err</span><span class="v" id="hFusP">-</span></div>
+      <div class="kv"><span>rot err</span><span class="v" id="hRot">-</span></div>
+      <div class="kv"><span>proc</span><span class="v" id="hProc">-</span></div>
+      <div class="kv"><span>fast thresh</span><span class="v" id="hFast">-</span></div>
+      <div class="kv"><span>noise floor</span><span class="v" id="hNoise">-</span></div>
+      <div class="info" style="margin-top:8px">Running medians</div>
+      <div class="kv"><span>raw median</span><span class="v" id="hRawMed">-</span></div>
+      <div class="kv"><span>fused median</span><span class="v" id="hFusMed">-</span></div>
+      <div class="kv"><span>held %</span><span class="v" id="hHeld">-</span></div>
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    // ============================================================
+    //  Config — query params override UI defaults; ?run=1 = headless
+    //  scored run (sets window.__TEST_DONE__ for tools/run-pipeline-test.mjs)
+    // ============================================================
+    // file:// can't load the worker/WASM/assets - point at the server instead
+    if (location.protocol === 'file:') {
+      document.body.innerHTML = `
+        <div style="max-width:640px;margin:60px auto;background:#1a1a22;border:1px solid #a55;border-radius:12px;padding:28px;font-family:monospace;color:#eee;line-height:1.9">
+          <h2 style="color:#f88;margin-top:0">⚠️ Opened as a file — the engine can't load this way</h2>
+          <b>1.</b> Start the server: <code style="background:#000;padding:4px 10px;border-radius:6px">venv\\Scripts\\python app.py</code><br/>
+          <b>2.</b> Open <a style="color:#6cf" href="http://localhost:5000/static/sim.html">http://localhost:5000/static/sim.html</a>
+        </div>`
+      throw new Error('file:// - aborting boot')
+    }
+
+    const Q = new URLSearchParams(location.search)
+    const qNum = (k, d) => Q.has(k) ? parseFloat(Q.get(k)) : d
+    const CFG = {
+      traj: Q.get('traj') || 'slam',
+      // Defaults sit safely inside the stable basin (a reliably-green
+      // regression baseline). Map-tracking is BIMODAL under degradation —
+      // it either builds a good map and holds, or collapses — and the knee
+      // is around σ≈5–8 + blur≈0.4. Push the sliders past there for the
+      // dim-room / fast-motion torture test that reproduces field losses.
+      noise: qNum('noise', 2),       // additive Gaussian σ in 8-bit levels
+      blur: qNum('blur', 0.1),       // shutter fraction of one inter-frame interval (0..1)
+      shake: qNum('shake', 1),       // hand tremor amplitude, millimetres
+      expo: qNum('expo', 0.1),       // exposure drift amplitude (fraction)
+      gyro: qNum('gyro', 0.2),       // synthetic-IMU orientation noise, degrees
+      visionHz: qNum('hz', 20),      // vision frame rate (fusion render clock is 60Hz)
+      // Research-platform params: seed decorrelates every stochastic element
+      // (noise/shake/gyro) between runs — seed=0 reproduces the canonical
+      // baseline EXACTLY. label is echoed back in metrics for run tracking.
+      seed: qNum('seed', 0),
+      label: Q.get('label') || '',
+      imu: Q.get('imu') !== '0',     // &imu=0 -> fusion runs vision-only
+      autoRun: Q.get('run') === '1',
+      pipeCfg: null                  // ?cfg=<url-encoded JSON> -> worker init config
+    }
+    try { if (Q.get('cfg')) CFG.pipeCfg = JSON.parse(Q.get('cfg')) } catch (e) { console.warn('[SIM] bad ?cfg= ignored:', e) }
+
+    const logEl = document.getElementById('log')
+    const checks = []
+    function log(cls, msg) {
+      const d = document.createElement('div')
+      d.className = cls; d.textContent = msg
+      logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight
+      console.log(`[SIM:${cls}] ${msg}`)
+    }
+    function check(name, cond, detail) {
+      checks.push({ name, pass: !!cond })
+      log(cond ? 'pass' : 'fail', `${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  (' + detail + ')' : ''}`)
+    }
+
+    // ---------------- camera model (must match worker intrinsics) ----------------
+    const W = 480, H = 360
+    const F = W / (2 * Math.tan(Math.PI / 6))        // 60° horizontal
+    const FOV_V = 2 * Math.atan(H / (2 * F)) * 180 / Math.PI
+    const INTRINSICS = { fx: F, fy: F, cx: W / 2, cy: H / 2 }
+
+    // ============================================================
+    //  Synthetic 3D world — a textured "room" so the map has real
+    //  geometry at many depths to triangulate (not just the poster).
+    // ============================================================
+    function noiseTexture(seed, size) {
+      const c = document.createElement('canvas')
+      c.width = c.height = size || 256
+      const ctx = c.getContext('2d')
+      let s = seed >>> 0
+      const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
+      // mid-grey base + dense high-contrast specks => lots of ORB corners
+      ctx.fillStyle = '#6e6e6e'; ctx.fillRect(0, 0, c.width, c.height)
+      for (let i = 0; i < 340; i++) {
+        const g = Math.floor(rnd() * 255)
+        ctx.fillStyle = `rgb(${g},${g},${g})`
+        ctx.fillRect(rnd() * c.width, rnd() * c.height, 3 + rnd() * 22, 3 + rnd() * 22)
+      }
+      return new THREE.CanvasTexture(c)
+    }
+
+    function texturedPlane(scene, w, h, pos, rotY, rotX, seed) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ map: noiseTexture(seed) }))
+      m.position.set(pos[0], pos[1], pos[2])
+      if (rotY) m.rotation.y = rotY
+      if (rotX) m.rotation.x = rotX
+      scene.add(m)
+      return m
+    }
+
+    async function buildScene() {
+      const scene = new THREE.Scene()
+      scene.background = new THREE.Color(0x2a2a2a)
+
+      // Poster: matches the compiled target (0.667 x 1.0 m) at the origin.
+      const posterTex = await new Promise((res, rej) =>
+        new THREE.TextureLoader().load('/static/assets/ranger-base-image.jpg', res, undefined, rej))
+      const poster = new THREE.Mesh(new THREE.PlaneGeometry(0.667, 1.0),
+        new THREE.MeshBasicMaterial({ map: posterTex }))
+      scene.add(poster)
+      scene.userData.poster = poster
+
+      // Back wall behind the poster
+      texturedPlane(scene, 9, 4, [1.2, 0, -1.2], 0, 0, 999)
+      // Floor + ceiling (give vertical parallax during shake / pitch)
+      texturedPlane(scene, 9, 5, [1.2, -1.4, 0.4], 0, -Math.PI / 2, 4242)
+      texturedPlane(scene, 9, 5, [1.2, 1.4, 0.4], 0, Math.PI / 2, 7321)
+      // Right wall — the pan-away direction must stay full of structure
+      texturedPlane(scene, 5, 4, [4.4, 0, 0.0], -Math.PI / 2, 0, 555)
+
+      // Scattered objects at varied depths toward +X (the explore direction)
+      const boxSeed = (i) => 1234 + i * 97
+      const boxes = [
+        [-1.0, 0.0, -0.3, 0.45], [1.1, -0.2, 0.1, 0.4], [1.9, 0.25, -0.2, 0.5],
+        [2.7, -0.1, 0.15, 0.45], [3.5, 0.15, -0.1, 0.5], [0.6, 0.7, -0.2, 0.35],
+        [1.7, -0.7, 0.0, 0.4], [3.0, 0.75, -0.15, 0.4]
+      ]
+      boxes.forEach((b, i) => {
+        const mat = new THREE.MeshBasicMaterial({ map: noiseTexture(boxSeed(i)) })
+        const cube = new THREE.Mesh(new THREE.BoxGeometry(b[3], b[3], b[3]), mat)
+        cube.position.set(b[0], b[1], b[2])
+        cube.rotation.set(0.3 + i * 0.2, 0.4 + i * 0.3, 0)
+        scene.add(cube)
+      })
+      return scene
+    }
+
+    // ============================================================
+    //  Trajectories — return a smooth path; shake is added on top.
+    //  fracI is a continuous frame index (sub-frames for motion blur).
+    // ============================================================
+    const ease = (a, b, t) => a + (b - a) * (t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t))
+    const TRAJ = {
+      slam: { frames: 140, teleportAt: 125, fn(i) {
+        if (i < 40) { const t = i / 39; return { pos: [ease(0, 0.5, t), ease(0, 0.04, t), ease(1.5, 1.42, t)], target: [0, 0, 0] } }
+        if (i < 80) { const t = (i - 40) / 39; return { pos: [ease(0.5, 1.9, t), 0.04, ease(1.42, 1.30, t)], target: [ease(0, 3.0, t), 0, ease(0, -0.3, t)] } }
+        if (i < 125) { const t = (i - 80) / 29; return { pos: [ease(1.9, 0.5, t), 0.04, ease(1.30, 1.45, t)], target: [ease(3.0, 0, t), 0, ease(-0.3, 0, t)] } }
+        const t = 20 / 39; return { pos: [ease(0, 0.5, t), ease(0, 0.04, t), ease(1.5, 1.42, t)], target: [0, 0, 0] }
+      } },
+      fastpan: { frames: 90, fn(i) {
+        // hold, then a quick lateral sweep and back — high inter-frame motion
+        const t = i / 89
+        const sweep = Math.sin(t * Math.PI * 2) * 1.3
+        return { pos: [0.3 + sweep, 0.03, 1.35], target: [sweep * 0.7, 0, 0] }
+      } },
+      approach: { frames: 90, fn(i) {
+        const t = i / 89
+        const z = 1.7 - Math.sin(t * Math.PI) * 1.0   // dolly in to 0.7m and back
+        return { pos: [0.25, 0.02, z], target: [0, 0, 0] }
+      } },
+      shaky: { frames: 90, fn() {
+        // nominally parked close to the poster; all motion comes from shake
+        return { pos: [0.2, 0.0, 1.0], target: [0, 0, 0] }
+      } },
+      orbit: { frames: 120, loop: true, fn(i) {
+        const a = (i / 120) * Math.PI * 2
+        return { pos: [Math.sin(a) * 0.9 + 0.3, 0.05, 1.35 + Math.cos(a) * 0.2], target: [0, 0, 0] }
+      } }
+    }
+
+    // Deterministic hand tremor: sum of a few incommensurate sines per axis,
+    // evaluated in seconds so blur sub-samples within a frame see real motion.
+    function shakeOffset(tSec, ampM, axis) {
+      // seed shifts the tremor phases; zero-offset at seed=0 (canonical run)
+      const f = [2.3, 5.1, 8.7][axis], g = [3.7, 6.9, 11.3][axis], ph = axis * 1.7 + CFG.seed * 0.7391
+      return ampM * (Math.sin(tSec * f * 2 * Math.PI + ph) + 0.5 * Math.sin(tSec * g * 2 * Math.PI + ph * 2)) / 1.5
+    }
+
+    const _scratchCam = new THREE.PerspectiveCamera(FOV_V, W / H, 0.01, 50)
+    // Ground-truth pose (position + quaternion) at continuous frame fracI,
+    // INCLUDING shake — the camera physically is here, so this is truth.
+    function gtPose(fracI, traj) {
+      const base = traj.fn(fracI)
+      const tSec = fracI / CFG.visionHz
+      const amp = CFG.shake / 1000
+      const pos = [
+        base.pos[0] + shakeOffset(tSec, amp, 0),
+        base.pos[1] + shakeOffset(tSec, amp, 1),
+        base.pos[2] + shakeOffset(tSec, amp, 2)
+      ]
+      // small look-target jitter => orientation tremor too
+      const tgt = [
+        base.target[0] + shakeOffset(tSec + 11, amp * 1.5, 0),
+        base.target[1] + shakeOffset(tSec + 11, amp * 1.5, 1),
+        base.target[2]
+      ]
+      _scratchCam.position.set(pos[0], pos[1], pos[2])
+      _scratchCam.lookAt(tgt[0], tgt[1], tgt[2])
+      _scratchCam.updateMatrixWorld(true)
+      return { pos, quat: _scratchCam.quaternion.clone() }
+    }
+
+    function posterVisible(quat, pos) {
+      _scratchCam.position.set(pos[0], pos[1], pos[2])
+      _scratchCam.quaternion.copy(quat)
+      _scratchCam.updateMatrixWorld(true)
+      const p = new THREE.Vector3(0, 0, 0).project(_scratchCam)
+      return Math.abs(p.x) < 0.92 && Math.abs(p.y) < 0.92 && p.z < 1
+    }
+
+    // ============================================================
+    //  Render + degrade one frame -> ImageData the worker consumes
+    // ============================================================
+    let renderer, rt, gpuCam, pixels, accBuf
+    function initGL() {
+      renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: false })
+      renderer.setSize(W, H, false)
+      rt = new THREE.WebGLRenderTarget(W, H)
+      gpuCam = new THREE.PerspectiveCamera(FOV_V, W / H, 0.01, 50)
+      pixels = new Uint8Array(W * H * 4)
+      accBuf = new Float32Array(W * H * 4)
+    }
+
+    // Gaussian via Box–Muller, seeded per integer frame for repeatability.
+    function makeRng(seed) {
+      let s = (seed * 2654435761) >>> 0 || 1
+      return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
+    }
+
+    function renderDegraded(scene, iInt, traj) {
+      const blur = Math.max(0, Math.min(1, CFG.blur))
+      const K = blur > 0.001 ? 5 : 1            // shutter sub-samples
+      accBuf.fill(0)
+      for (let k = 0; k < K; k++) {
+        // open-shutter interval ends at the integer frame instant
+        const frac = K === 1 ? iInt : iInt - blur * (1 - k / (K - 1))
+        const gp = gtPose(frac, traj)
+        gpuCam.position.set(gp.pos[0], gp.pos[1], gp.pos[2])
+        gpuCam.quaternion.copy(gp.quat)
+        gpuCam.updateMatrixWorld(true)
+        renderer.setRenderTarget(rt)
+        renderer.render(scene, gpuCam)
+        renderer.readRenderTargetPixels(rt, 0, 0, W, H, pixels)
+        for (let j = 0; j < pixels.length; j++) accBuf[j] += pixels[j]
+      }
+      renderer.setRenderTarget(null)
+
+      const inv = 1 / K
+      const gain = 1 + CFG.expo * Math.sin(iInt * 0.21)   // slow exposure drift
+      const sigma = CFG.noise
+      const rng = makeRng((iInt + 1) + CFG.seed * 100003)
+      // average + exposure + additive Gaussian noise, then flip GL rows (bottom-up)
+      const img = new ImageData(W, H)
+      const out = img.data
+      for (let r = 0; r < H; r++) {
+        const srcRow = (H - 1 - r) * W * 4
+        const dstRow = r * W * 4
+        for (let c = 0; c < W; c++) {
+          const si = srcRow + c * 4, di = dstRow + c * 4
+          for (let ch = 0; ch < 3; ch++) {
+            let v = accBuf[si + ch] * inv * gain
+            if (sigma > 0) {
+              const u1 = Math.max(1e-9, rng()), u2 = rng()
+              v += sigma * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
+            }
+            out[di + ch] = v < 0 ? 0 : v > 255 ? 255 : v
+          }
+          out[di + 3] = 255
+        }
+      }
+      return img
+    }
+
+    // ============================================================
+    //  Worker driver
+    // ============================================================
+    function bootWorker() {
+      const worker = new Worker('/static/sdk/vision/vision-worker.js')
+      const pending = new Map()
+      worker.onmessage = (e) => {
+        const m = e.data
+        if (m.type === 'ready') { const p = pending.get('ready'); if (p) p(m.info); return }
+        if (m.type === 'error') { log('fail', 'WORKER: ' + m.message); const p = pending.get(m.id !== undefined ? m.id : 'ready'); if (p) p(null); return }
+        if (m.type === 'result') { const p = pending.get(m.id); if (p) { pending.delete(m.id); p(m) } }
+      }
+      worker.onerror = (e) => log('fail', 'WORKER CRASH: ' + e.message)
+      worker.send = (msg, transfer) => new Promise(res => {
+        pending.set(msg.id !== undefined ? msg.id : 'ready', res)
+        worker.postMessage(msg, transfer || [])
+      })
+      return worker
+    }
+
+    // ============================================================
+    //  Top-down plot (X right, Z up)  +  HUD
+    // ============================================================
+    const plotCtx = document.getElementById('plot').getContext('2d')
+    const previewCtx = document.getElementById('preview').getContext('2d')
+    function drawPlot(gtPath, rawPath, fusPath, mapPts) {
+      const cv = plotCtx.canvas, w = cv.width, h = cv.height
+      plotCtx.clearRect(0, 0, w, h)
+      plotCtx.fillStyle = '#0a0a0a'; plotCtx.fillRect(0, 0, w, h)
+      const all = gtPath.concat(rawPath, fusPath, [[0, 0]])
+      let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9
+      for (const p of all) { if (!p) continue; minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]); minZ = Math.min(minZ, p[1]); maxZ = Math.max(maxZ, p[1]) }
+      if (!isFinite(minX)) return
+      const pad = 0.4, sx = (w - 30) / Math.max(0.5, (maxX - minX) + pad * 2), sz = (h - 30) / Math.max(0.5, (maxZ - minZ) + pad * 2)
+      const sc = Math.min(sx, sz)
+      const X = x => 15 + (x - minX + pad) * sc
+      const Z = z => h - 15 - (z - minZ + pad) * sc
+      // poster marker at origin
+      plotCtx.fillStyle = '#fff'; plotCtx.fillRect(X(0) - 3, Z(0) - 3, 6, 6)
+      plotCtx.fillStyle = '#888'; plotCtx.font = '10px monospace'; plotCtx.fillText('poster', X(0) + 6, Z(0) + 3)
+      // map points
+      plotCtx.fillStyle = '#fa0'
+      for (const m of mapPts) plotCtx.fillRect(X(m[0]) - 1, Z(m[1]) - 1, 2, 2)
+      const path = (pts, col) => {
+        plotCtx.strokeStyle = col; plotCtx.lineWidth = 1.5; plotCtx.beginPath()
+        let started = false
+        for (const p of pts) { if (!p) { started = false; continue } const xx = X(p[0]), zz = Z(p[1]); if (!started) { plotCtx.moveTo(xx, zz); started = true } else plotCtx.lineTo(xx, zz) }
+        plotCtx.stroke()
+      }
+      path(gtPath, '#0f0'); path(rawPath, '#0cf'); path(fusPath, '#f6a')
+    }
+
+    const $ = id => document.getElementById(id)
+    function hud(o) { for (const k in o) { const el = $(k); if (el) el.textContent = o[k] } }
+
+    // ============================================================
+    //  One full trajectory run (scored). Drives real worker + a real
+    //  FusionEngine on a synthetic 60Hz clock fed by a synthetic IMU.
+    // ============================================================
+    let RUNNING = false
+    async function runTrajectory(scene, worker, traj, opts) {
+      opts = opts || {}
+      const N = traj.frames
+      const visionDt = 1000 / CFG.visionHz, renderDt = 1000 / 60
+
+      const fusion = new FusionEngine()
+      const imuSim = { isActive: CFG.imu, hasData: () => CFG.imu, rawQuaternion: { x: 0, y: 0, z: 0, w: 1 } }
+      fusion.setIMUProvider(imuSim)
+      const gyroRng = makeRng(7 + CFG.seed * 31)
+      // synthetic IMU = GT orientation (+ optional small noise), at any time
+      function setImuAt(fracI) {
+        const q = gtPose(fracI, traj).quat
+        if (CFG.gyro > 0) {
+          const a = CFG.gyro * Math.PI / 180 * (gyroRng() - 0.5)
+          const nq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a)
+          q.multiply(nq)
+        }
+        imuSim.rawQuaternion = { x: q.x, y: q.y, z: q.z, w: q.w }
+      }
+
+      const rows = [], gtPath = [], rawPath = [], fusPath = []
+      let renderClock = 0
+      const fusedErrs = []      // {i, e}
+      const gtScratch = new THREE.Vector3()
+
+      for (let i = 0; i < N && (opts.live ? RUNNING : true); i++) {
+        // Liveness beacon: the orchestrator's stall watchdog reads this -
+        // a frame counter that stops advancing means the run is wedged.
+        window.__SIM_PROGRESS__ = { frame: i, total: N, t: Date.now() }
+        const Ti = i * visionDt
+
+        // --- advance the 60Hz fusion/render clock up to this vision frame,
+        //     scoring the FUSED (on-screen) pose against GT at each tick ---
+        while (renderClock <= Ti) {
+          const fracTick = renderClock / visionDt
+          setImuAt(fracTick)
+          const fp = fusion.getRenderPose(renderClock)
+          if (fp.tracking && fracTick <= N) {
+            const g = gtPose(fracTick, traj)
+            const e = Math.hypot(fp.position.x - g.pos[0], fp.position.y - g.pos[1], fp.position.z - g.pos[2])
+            // fused ROTATION error: this is where the IMU actually acts
+            // (it never drives translation in this architecture)
+            const qd = Math.abs(fp.quaternion.x * g.quat.x + fp.quaternion.y * g.quat.y +
+              fp.quaternion.z * g.quat.z + fp.quaternion.w * g.quat.w)
+            const re = 2 * Math.acos(Math.min(1, qd)) * 180 / Math.PI
+            fusedErrs.push({ i: fracTick, e, re })
+            if ((i % 2) === 0) fusPath.push([fp.position.x, fp.position.z])
+          }
+          renderClock += renderDt
+        }
+
+        // --- render the degraded frame and run the REAL vision worker ---
+        if (traj.teleportAt !== undefined) scene.userData.poster.visible = i < traj.teleportAt
+        const gp = gtPose(i, traj)
+        const vis = posterVisible(gp.quat, gp.pos)
+        const img = renderDegraded(scene, i, traj)
+        if ((i % 2) === 0) previewCtx.putImageData(img, 0, 0)
+
+        const r = await worker.send({ type: 'frame', imageData: img, id: i + 1, intrinsics: INTRINSICS }, [img.data.buffer])
+
+        // raw vision error vs GT
+        let posErr = null, rotErr = null
+        if (r && r.detected && r.pose) {
+          const p = r.pose.position
+          posErr = Math.hypot(p.x - gp.pos[0], p.y - gp.pos[1], p.z - gp.pos[2])
+          const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().fromArray(r.pose.matrix))
+          rotErr = 2 * Math.acos(Math.min(1, Math.abs(q.dot(gp.quat)))) * 180 / Math.PI
+        }
+
+        // --- feed fusion: snapshot IMU at capture time, then the correction ---
+        setImuAt(i)
+        fusion.saveSnapshot(i + 1, imuSim.rawQuaternion, Ti)
+        if (r && r.detected && r.pose) { r.pose.id = i + 1; fusion.pushVisionPose(r.pose, Ti) }
+        else fusion.notifyMiss()
+
+        const d = r && r.debug ? r.debug : {}
+        rows.push({ i, vis, detected: !!(r && r.detected), state: d.state || '?', mode: d.mode || '?',
+          mapPts: d.map_points || 0, dormant: d.map_dormant || 0, drift: d.reacquire_drift_m,
+          bridged: d.map_frames_bridged, proc: d.proc_ms || 0, fast: d.fast_thresh, noise: d.noise_px,
+          cands: d.map_cands || 0, strong: d.strong || 0, reproj: d.reproj, inliers: d.inliers || 0,
+          mapDbg: d.map_dbg,
+          posErr, rotErr })
+
+        // paths + live HUD
+        gtPath.push([gp.pos[0], gp.pos[2]])
+        rawPath.push(posErr !== null ? [r.pose.position.x, r.pose.position.z] : null)
+        const rawSoFar = rows.map(x => x.posErr).filter(v => v != null).sort((a, b) => a - b)
+        const fusSoFar = fusedErrs.map(x => x.e).sort((a, b) => a - b)
+        const heldOut = rows.filter(x => !x.vis)
+        const heldOk = heldOut.filter(x => x.detected && x.state === 'MAP_TRACKING')
+        if (!opts.silent) {
+          hud({
+            hFrame: `${i + 1}/${N}`, hState: d.state || '-', hMode: d.mode || '-',
+            hMap: `${d.map_points || 0} / ${d.map_dormant || 0}`,
+            hRawP: posErr != null ? (posErr * 100).toFixed(1) + ' cm' : '—',
+            hFusP: fusedErrs.length ? (fusedErrs[fusedErrs.length - 1].e * 100).toFixed(1) + ' cm' : '—',
+            hRot: rotErr != null ? rotErr.toFixed(2) + '°' : '—',
+            hProc: (d.proc_ms || 0).toFixed(1) + ' ms',
+            hFast: d.fast_thresh != null ? d.fast_thresh : (rows.findLast ? '·' : '·'),
+            hNoise: d.noise_px != null ? d.noise_px.toFixed(2) + ' px' : 'learning…',
+            hRawMed: rawSoFar.length ? (rawSoFar[rawSoFar.length >> 1] * 100).toFixed(1) + ' cm' : '—',
+            hFusMed: fusSoFar.length ? (fusSoFar[fusSoFar.length >> 1] * 100).toFixed(1) + ' cm' : '—',
+            hHeld: heldOut.length ? Math.round(heldOk.length / heldOut.length * 100) + '%' : '—'
+          })
+          drawPlot(gtPath, rawPath, fusPath, [])
+        }
+      }
+      window.__SIM_ROWS__ = rows   // diagnostic surface for &dump=1
+      return { rows, fusedErrs, traj }
+    }
+
+    // ============================================================
+    //  Scoring — regression bars calibrated to current capability
+    //  under the DEFAULT degradation profile.
+    // ============================================================
+    function analyze(res) {
+      const { rows, fusedErrs, traj } = res
+      const N = traj.frames
+      const med = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[s.length >> 1] : null }
+      const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))] : 0 }
+      const avg = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0
+
+      const detected = rows.filter(x => x.detected)
+      const rawErrs = rows.map(x => x.posErr).filter(v => v != null)
+      const rotErrs = rows.map(x => x.rotErr).filter(v => v != null)
+      const fErrs = fusedErrs.map(x => x.e)
+      const maxMap = Math.max(0, ...rows.map(x => x.mapPts))
+      const out = rows.filter(x => !x.vis)
+      // "Held" = a sane pose is DELIVERED while the poster is out of view -
+      // regardless of which subsystem provides it. Poster-KLT clinging to an
+      // edge sliver counts (fastpan sweeps): requiring MAP_TRACKING state
+      // falsely scored those runs 0% while the pose error was 1-3cm.
+      const held = out.filter(x => x.detected && x.posErr != null && x.posErr < 0.35)
+      const allProc = rows.map(x => x.proc).filter(v => v > 0)
+
+      // ---- REPORTED METRICS (NOT hard bars) -----------------------------
+      // Map-tracking under image noise is a chaotic / bimodal function of the
+      // exact pixels: it either bootstraps a good map and holds, or collapses,
+      // and the knee (~σ5-8 + blur0.4) flips on input changes as small as the
+      // float differences between two browser engines. So detection rate,
+      // holding %, map peak and proc time are REPORTED for you to sweep, not
+      // asserted — sweep the sliders and read the curve. The deterministic
+      // tight regressions live in test-slam.html (clean) / test-pipeline.html.
+      log('info', `METRICS  detection=${detected.length}/${N} (${Math.round(detected.length / N * 100)}%)  map-peak=${maxMap}` +
+        (out.length >= 10 ? `  held=${held.length}/${out.length} (${Math.round(held.length / Math.max(1, out.length) * 100)}%)` : `  (poster stayed in view)`))
+      log('info', `METRICS  raw-median=${rawErrs.length ? (med(rawErrs) * 100).toFixed(1) : '-'}cm  raw-p90=${rawErrs.length ? (pct(rawErrs, 0.9) * 100).toFixed(1) : '-'}cm  fused-median=${fErrs.length ? (med(fErrs) * 100).toFixed(1) : '-'}cm  rot-median=${rotErrs.length ? med(rotErrs).toFixed(2) : '-'}°`)
+      const timeline = rows.map(x => x.state === 'TRACKING' ? 'T' : x.state === 'MAP_TRACKING' ? 'M' : x.state === 'LOST' ? 'L' : 's').join('')
+      log('info', `BENCH proc: mean=${avg(allProc).toFixed(1)} p50=${pct(allProc, 0.5).toFixed(1)} p95=${pct(allProc, 0.95).toFixed(1)} max=${Math.max(...allProc).toFixed(1)}ms (machine-dependent)`)
+      log('info', `profile: traj=${CFG.traj} noise=${CFG.noise} blur=${CFG.blur} shake=${CFG.shake}mm expo=${CFG.expo} gyro=${CFG.gyro}° visionHz=${CFG.visionHz} seed=${CFG.seed}`)
+      log('info', `timeline: ` + timeline)
+
+      // ---- HARD CHECKS: robust invariants that held in BOTH the stable and
+      //      the collapse runs, so ?run=1 is a reliable green smoke test that
+      //      the sim + worker + fusion stack runs and yields sane poses. -----
+      const acquired = rows.findIndex(x => x.detected)
+      check('engine produces detections', detected.length >= 5, `${detected.length} detected`)
+      check('acquires within 12 frames', acquired >= 0 && acquired <= 12, `frame ${acquired}`)
+      check('map module builds points (≥ 5 peak)', maxMap >= 5, `${maxMap} peak`)
+      if (rawErrs.length) {
+        check('raw-vision median pos err < 15cm', med(rawErrs) < 0.15, `${(med(rawErrs) * 100).toFixed(1)}cm`)
+        check('raw-vision p90 pos err < 30cm', pct(rawErrs, 0.9) < 0.30, `${(pct(rawErrs, 0.9) * 100).toFixed(1)}cm`)
+        check('rotation median < 5°', med(rotErrs) < 5, `${med(rotErrs).toFixed(2)}°`)
+        check('all detected poses finite', rawErrs.every(isFinite) && rotErrs.every(isFinite))
+      }
+      if (fErrs.length) check('fused (on-screen) median < 16cm', med(fErrs) < 0.16, `${(med(fErrs) * 100).toFixed(1)}cm`)
+
+      // Structured metrics for the research platform (tools/research.mjs):
+      // everything the log lines above say, as numbers.
+      const r2 = v => v == null ? null : Math.round(v * 100) / 100
+      return {
+        frames: N,
+        detectionRate: Math.round(detected.length / N * 1000) / 1000,
+        acquiredFrame: acquired,
+        mapPeak: maxMap,
+        heldPct: out.length >= 10 ? Math.round(held.length / out.length * 1000) / 10 : null,
+        heldDenom: out.length,
+        rawMedianCm: rawErrs.length ? r2(med(rawErrs) * 100) : null,
+        rawP90Cm: rawErrs.length ? r2(pct(rawErrs, 0.9) * 100) : null,
+        rotMedianDeg: rotErrs.length ? r2(med(rotErrs)) : null,
+        fusedMedianCm: fErrs.length ? r2(med(fErrs) * 100) : null,
+        fusedP90Cm: fErrs.length ? r2(pct(fErrs, 0.9) * 100) : null,
+        fusedRotMedianDeg: (() => {
+          const rs = fusedErrs.map(x => x.re).filter(v => v != null && isFinite(v))
+          return rs.length ? r2(med(rs)) : null
+        })(),
+        fusedRotP90Deg: (() => {
+          const rs = fusedErrs.map(x => x.re).filter(v => v != null && isFinite(v))
+          return rs.length ? r2(pct(rs, 0.9)) : null
+        })(),
+        procP50Ms: r2(pct(allProc, 0.5)),
+        procP95Ms: r2(pct(allProc, 0.95)),
+        lostFrames: rows.filter(x => x.state === 'LOST').length,
+        timeline,
+        profile: {
+          traj: CFG.traj, noise: CFG.noise, blur: CFG.blur, shake: CFG.shake,
+          expo: CFG.expo, gyro: CFG.gyro, visionHz: CFG.visionHz,
+          seed: CFG.seed, label: CFG.label, imu: CFG.imu ? 1 : 0
+        },
+        cfg: CFG.pipeCfg || null
+      }
+    }
+
+    // ============================================================
+    //  Orchestration
+    // ============================================================
+    let SCENE = null, WORKER = null, READY = false
+    async function ensureEngine() {
+      if (READY) return true
+      initGL()
+      SCENE = await buildScene()
+      WORKER = bootWorker()
+      const tgt = await (await fetch('/static/assets/ranger-base-image.webart')).arrayBuffer()
+      const info = await WORKER.send({ type: 'init', targetBuffer: tgt, config: CFG.pipeCfg }, [tgt])
+      check('engine init', info && info.ready, info ? 'runtime=' + info.runtime + ' simdMatcher=' + info.simdMatcher : 'FAILED')
+      READY = !!(info && info.ready)
+      return READY
+    }
+
+    function syncCfgFromUI() {
+      CFG.traj = $('cTraj').value
+      CFG.noise = +$('cNoise').value
+      CFG.blur = +$('cBlur').value / 100
+      CFG.shake = +$('cShake').value
+      CFG.expo = +$('cExpo').value / 100
+      CFG.gyro = +$('cGyro').value / 10
+      CFG.visionHz = +$('cHz').value
+    }
+    function bindUI() {
+      const upd = () => {
+        $('vNoise').textContent = $('cNoise').value
+        $('vBlur').textContent = (+$('cBlur').value / 100).toFixed(2)
+        $('vShake').textContent = $('cShake').value
+        $('vExpo').textContent = (+$('cExpo').value / 100).toFixed(2)
+        $('vGyro').textContent = (+$('cGyro').value / 10).toFixed(1)
+        $('vHz').textContent = $('cHz').value
+      }
+      ;['cNoise', 'cBlur', 'cShake', 'cExpo', 'cGyro', 'cHz'].forEach(id => $(id).addEventListener('input', upd))
+      upd()
+      // reflect query defaults into the controls
+      $('cTraj').value = CFG.traj
+      $('cNoise').value = CFG.noise; $('cBlur').value = Math.round(CFG.blur * 100)
+      $('cShake').value = CFG.shake; $('cExpo').value = Math.round(CFG.expo * 100)
+      $('cGyro').value = Math.round(CFG.gyro * 10); $('cHz').value = CFG.visionHz; upd()
+
+      $('btnRun').onclick = async () => {
+        if (RUNNING) return
+        syncCfgFromUI(); checks.length = 0; logEl.innerHTML = ''
+        $('btnRun').disabled = $('btnLoop').disabled = true; $('btnStop').disabled = false; RUNNING = true
+        if (await ensureEngine()) {
+          WORKER.send({ type: 'reset' })
+          const traj = TRAJ[CFG.traj]
+          const res = await runTrajectory(SCENE, WORKER, traj, {})
+          analyze(res)
+          const passed = checks.filter(c => c.pass).length
+          log(passed === checks.length ? 'pass' : 'fail', `========== ${passed}/${checks.length} checks ==========`)
+        }
+        RUNNING = false; $('btnRun').disabled = $('btnLoop').disabled = false; $('btnStop').disabled = true
+      }
+      $('btnLoop').onclick = async () => {
+        if (RUNNING) return
+        syncCfgFromUI(); logEl.innerHTML = ''
+        $('btnRun').disabled = $('btnLoop').disabled = true; $('btnStop').disabled = false; RUNNING = true
+        if (await ensureEngine()) {
+          const traj = TRAJ[CFG.traj]
+          while (RUNNING) { WORKER.send({ type: 'reset' }); await runTrajectory(SCENE, WORKER, traj, { live: true, silent: false }) }
+        }
+        RUNNING = false; $('btnRun').disabled = $('btnLoop').disabled = false; $('btnStop').disabled = true
+      }
+      $('btnStop').onclick = () => { RUNNING = false }
+    }
+
+    async function headless() {
+      // ?run=1 — scored batch for tools/research.mjs / run-pipeline-test.mjs
+      let metrics = null
+      if (await ensureEngine()) {
+        WORKER.send({ type: 'reset' })
+        const traj = TRAJ[CFG.traj]
+        const res = await runTrajectory(SCENE, WORKER, traj, { silent: false })
+        metrics = analyze(res)
+      }
+      const passed = checks.filter(c => c.pass).length
+      const failed = checks.length - passed
+      log(failed ? 'fail' : 'pass', `========== ${passed}/${checks.length} checks passed ==========`)
+      window.__TEST_DONE__ = { passed, failed, checks, metrics }
+      // &dump=1: per-frame diagnostic rows (root-causing, not for experiments)
+      if (Q.get('dump') === '1' && window.__SIM_ROWS__) {
+        window.__TEST_DONE__.rows = window.__SIM_ROWS__.map(x => ({
+          i: x.i, st: x.state[0] || '?', md: x.mode, inl: x.inliers, map: x.mapPts,
+          cnd: x.cands, drm: x.dormant, strong: x.strong,
+          rj: x.reproj != null ? x.reproj : null, nz: x.noise != null ? x.noise : null,
+          pe: x.posErr != null ? Math.round(x.posErr * 1000) / 10 : null,
+          vis: x.vis ? 1 : 0, dbg: x.mapDbg || undefined
+        }))
+      }
+    }
+
+    if (CFG.autoRun) headless().catch(e => {
+      log('fail', 'FATAL: ' + (e.stack || e))
+      window.__TEST_DONE__ = { passed: 0, failed: 1, checks, metrics: null, error: String(e && e.stack || e) }
+    })
+    else bindUI()
+  </script>
+</body>
+</html>

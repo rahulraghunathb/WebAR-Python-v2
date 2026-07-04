@@ -73,6 +73,9 @@ class ModelRenderer {
         // IMU manager reference (set externally)
         this.imuManager = null
 
+        // Dev map visualization (created only by enableMapViz)
+        this.mapViz = null
+
         // Phase 2 fusion engine (set externally). When present it OWNS
         // smoothing, IMU prediction, latency compensation and loss handling;
         // the legacy paths below remain as the no-fusion fallback.
@@ -423,6 +426,111 @@ class ModelRenderer {
     }
 
     /**
+     * DEV-ONLY map visualization: SLAM point cloud + camera trail, in the
+     * same world frame as the model (so dots stick to the real surfaces
+     * they were triangulated on). Nothing is allocated unless enabled.
+     */
+    enableMapViz() {
+        if (this.mapViz) return
+        const MAX = 400
+        const geo = new THREE.BufferGeometry()
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 3), 3))
+        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX * 3), 3))
+        geo.setDrawRange(0, 0)
+        const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+            size: 0.03, vertexColors: true, sizeAttenuation: true,
+            depthTest: false, transparent: true, opacity: 0.95
+        }))
+        pts.frustumCulled = false
+        this.scene.add(pts)
+
+        // Trail as SEGMENTS, not a continuous line: tracking loss, reacquire
+        // snaps and drift corrections teleport the camera, and a continuous
+        // polyline draws a bogus straight connector across every one of them.
+        const TRAIL = 600
+        const tgeo = new THREE.BufferGeometry()
+        tgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 6), 3))
+        tgeo.setDrawRange(0, 0)
+        const trail = new THREE.LineSegments(tgeo, new THREE.LineBasicMaterial({
+            color: 0x00ccff, transparent: true, opacity: 0.7, depthTest: false
+        }))
+        trail.frustumCulled = false
+        this.scene.add(trail)
+
+        this.mapViz = {
+            pts, geo, trail, tgeo, trailN: 0, trailMax: TRAIL, tick: 0,
+            lastTrail: null,
+            trailMinMove: 0.012,  // below this = pose jitter, don't scribble
+            trailMaxJump: 0.35    // above this = discontinuity, pen up
+        }
+        console.log('[Renderer] Map visualization enabled (dev)')
+    }
+
+    /**
+     * Feed worker mapViz payload (CV world coords).
+     * Stride 8: [x,y,z, kind, residualPx, sigmaZ, obs, baseline] - quality-
+     * coded coloring. Legacy stride 4 ([x,y,z,kind]) still accepted.
+     */
+    updateMapViz(viz) {
+        if (!this.mapViz || !viz || !viz.pts) return
+        const s = viz.stride || 4
+        const pos = this.mapViz.geo.attributes.position.array
+        const col = this.mapViz.geo.attributes.color.array
+        const n = Math.min(viz.pts.length / s, pos.length / 3)
+        for (let i = 0; i < n; i++) {
+            // CV world (Y down, Z away) -> GL world (Y up, Z toward viewer)
+            pos[i * 3] = viz.pts[i * s]
+            pos[i * 3 + 1] = -viz.pts[i * s + 1]
+            pos[i * 3 + 2] = -viz.pts[i * s + 2]
+            const tracked = viz.pts[i * s + 3] > 0.5
+            if (!tracked) {                         // dormant: amber
+                col[i * 3] = 1.0; col[i * 3 + 1] = 0.65; col[i * 3 + 2] = 0.1
+            } else if (s >= 8 && viz.pts[i * s + 4] >= 0) {
+                // tracked: green (residual ~0) -> yellow -> red (>= 4px)
+                const t = Math.min(1, viz.pts[i * s + 4] / 4)
+                col[i * 3] = 0.1 + 0.9 * t
+                col[i * 3 + 1] = 1.0 - 0.7 * t
+                col[i * 3 + 2] = 0.15
+            } else {                                // tracked, no residual info
+                col[i * 3] = 0.1; col[i * 3 + 1] = 1.0; col[i * 3 + 2] = 0.35
+            }
+        }
+        this.mapViz.geo.attributes.position.needsUpdate = true
+        this.mapViz.geo.attributes.color.needsUpdate = true
+        this.mapViz.geo.setDrawRange(0, n)
+    }
+
+    _updateTrail() {
+        const v = this.mapViz
+        if (!v || (++v.tick % 6) !== 0) return
+        const p = this.camera.position
+        if (!v.lastTrail) { v.lastTrail = p.clone(); return }
+
+        const d = p.distanceTo(v.lastTrail)
+        // Stationary: the pose noise floor produces cm-scale jitter at 10Hz.
+        // Keep the anchor where it is so slow real motion still accumulates
+        // past the threshold, but draw nothing.
+        if (d < v.trailMinMove) return
+
+        if (d < v.trailMaxJump) {
+            const arr = v.tgeo.attributes.position.array
+            if (v.trailN >= v.trailMax) {
+                arr.copyWithin(0, 6)
+                v.trailN = v.trailMax - 1
+            }
+            const o = v.trailN * 6
+            arr[o] = v.lastTrail.x; arr[o + 1] = v.lastTrail.y; arr[o + 2] = v.lastTrail.z
+            arr[o + 3] = p.x; arr[o + 4] = p.y; arr[o + 5] = p.z
+            v.trailN++
+            v.tgeo.attributes.position.needsUpdate = true
+            v.tgeo.setDrawRange(0, v.trailN * 2)
+        }
+        // d >= trailMaxJump: teleport (loss/reacquire/drift snap) - pen up,
+        // no segment; just move the anchor to the new position.
+        v.lastTrail.copy(p)
+    }
+
+    /**
      * Match the debug plane to the target's physical size (meters).
      * The plane is a unit square; without this it misrepresents any
      * non-square target as "misaligned".
@@ -494,6 +602,7 @@ class ModelRenderer {
                 this.camera.position.set(st.position.x, st.position.y, st.position.z)
                 this.camera.quaternion.set(st.quaternion.x, st.quaternion.y, st.quaternion.z, st.quaternion.w)
                 this.lastDistance = this.camera.position.length()
+                if (this.mapViz) this._updateTrail()
                 this.show()
             } else {
                 this.hide()

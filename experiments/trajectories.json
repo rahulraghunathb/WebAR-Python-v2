@@ -1,0 +1,10 @@
+{
+  "name": "trajectories",
+  "description": "All motion types at the default degradation: does failure depend on HOW you move?",
+  "base": { "noise": 3, "blur": 0.12, "shake": 2, "expo": 0.1, "gyro": 0.2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "approach", "shaky", "orbit"] },
+  "seeds": 3,
+  "configs": { "baseline": {} },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

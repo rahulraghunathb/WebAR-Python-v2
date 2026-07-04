@@ -1,0 +1,10 @@
+{
+  "name": "smoke",
+  "description": "4-run platform smoke test: 2 blur x 2 seeds, slam trajectory",
+  "base": { "traj": "slam", "noise": 2, "shake": 1, "expo": 0.1, "gyro": 0.2, "hz": 20 },
+  "grid": { "blur": [0.1, 0.14] },
+  "seeds": 2,
+  "configs": { "baseline": {} },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

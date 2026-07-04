@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebAR SDK - track diagnostics</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    .pass { color: #0f0; } .fail { color: #f44; } .info { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Track diagnostics (pipeline on main thread)</h1>
+  <p class="info">?build=&lt;vendor file&gt; selects the runtime. Logs per-frame corner
+  center vs mean tracked-scene-point x to localize stalls (LK/state vs homography).</p>
+  <div id="log"></div>
+  <canvas id="frameCanvas" width="480" height="360" style="display:none"></canvas>
+
+  <script>
+    const logEl = document.getElementById('log')
+    function log(cls, msg) {
+      const d = document.createElement('div')
+      d.className = cls
+      d.textContent = msg
+      logEl.appendChild(d)
+    }
+
+    const build = new URLSearchParams(location.search).get('build') || 'opencv-slim.js'
+    const W = 480, H = 360
+    const canvas = document.getElementById('frameCanvas')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    const FX = W / (2 * Math.tan(Math.PI / 6))
+
+    function renderFrame(target, t) {
+      const dx = t * 1.0
+      const dy = t * 0.4
+      const angle = (t * 0.25) * Math.PI / 180
+      const s = (160 / target.height) * (1 + t * 0.001)
+      ctx.fillStyle = '#3a3a3a'
+      ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#555'
+      ctx.fillRect(10, 10, 60, 40)
+      ctx.beginPath(); ctx.arc(430, 320, 25, 0, 7); ctx.fillStyle = '#666'; ctx.fill()
+      ctx.save()
+      ctx.translate(W / 2 + dx - 20, H / 2 + dy - 10)
+      ctx.rotate(angle)
+      ctx.scale(s, s)
+      ctx.drawImage(target, -target.width / 2, -target.height / 2)
+      ctx.restore()
+      return ctx.getImageData(0, 0, W, H)
+    }
+
+    const script = document.createElement('script')
+    script.src = '/static/sdk/vendor/' + build
+    script.onload = () => {
+      log('info', 'loaded ' + build)
+      if (typeof cv === 'undefined') { log('fail', 'cv undefined'); return finish(1) }
+      if (cv.Mat) boot()
+      else if (typeof cv.then === 'function') cv.then((mod) => { window.cv = mod; boot() })
+      else cv.onRuntimeInitialized = () => boot()
+    }
+    script.onerror = () => { log('fail', 'failed to load ' + build); finish(1) }
+    document.head.appendChild(script)
+
+    function boot() {
+      const p = document.createElement('script')
+      p.src = '/static/sdk/vision/pipeline.js'
+      p.onload = main
+      document.head.appendChild(p)
+    }
+
+    async function main() {
+      try {
+        const img = new Image()
+        img.src = '/static/assets/ranger-base-image.jpg'
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej })
+        const tc = document.createElement('canvas')
+        tc.width = img.width; tc.height = img.height
+        tc.getContext('2d').drawImage(img, 0, 0)
+        const targetData = tc.getContext('2d').getImageData(0, 0, img.width, img.height)
+
+        const pipeline = new VisionPipeline()
+        pipeline.compileTarget(targetData)
+        pipeline.setIntrinsics
+          ? pipeline.setIntrinsics({ fx: FX, fy: FX, cx: W / 2, cy: H / 2 })
+          : (pipeline.intrinsicsHint = { fx: FX, fy: FX, cx: W / 2, cy: H / 2 })
+        log('info', 'target compiled')
+
+        // ?pattern=persistent replicates vision-worker.js toGray(): one
+        // rgba/gray Mat pair reused across all frames via .data.set()
+        const persistent = new URLSearchParams(location.search).get('pattern') === 'persistent'
+        let pRgba = null, pGray = null
+        if (persistent) {
+          pRgba = new cv.Mat(H, W, cv.CV_8UC4)
+          pGray = new cv.Mat()
+          log('info', 'using persistent-Mat pattern (worker toGray replica)')
+        }
+
+        const rows = []
+        for (let t = 0; t < 40; t++) {
+          const frame = renderFrame(img, t)
+          let gray
+          if (persistent) {
+            pRgba.data.set(frame.data)
+            cv.cvtColor(pRgba, pGray, cv.COLOR_RGBA2GRAY)
+            gray = pGray
+          } else {
+            const rgba = cv.matFromImageData(frame)
+            gray = new cv.Mat()
+            cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY)
+            rgba.delete()
+          }
+          const r = pipeline.processFrame(gray)
+          if (!persistent) gray.delete()
+
+          let cx = null
+          if (r && r.corners) cx = (r.corners.reduce((s, c) => s + c[0], 0) / 4)
+          let sceneMx = null
+          if (pipeline.trackScene && pipeline.trackScene.length) {
+            let s = 0
+            for (let i = 0; i < pipeline.trackScene.length / 2; i++) s += pipeline.trackScene[i * 2]
+            sceneMx = s / (pipeline.trackScene.length / 2)
+          }
+          rows.push({ t, mode: pipeline.debug.mode, cx, sceneMx, inliers: pipeline.debug.inliers })
+          if (t < 6 || t % 5 === 0 || t === 39) {
+            log('info', `t=${t} mode=${pipeline.debug.mode} cornersCx=${cx === null ? '-' : cx.toFixed(1)} ` +
+              `sceneMeanX=${sceneMx === null ? '-' : sceneMx.toFixed(1)} inliers=${pipeline.debug.inliers}`)
+          }
+        }
+
+        const first = rows.find(r => r.cx !== null), last = [...rows].reverse().find(r => r.cx !== null)
+        const move = (last && first) ? (last.cx - first.cx) : 0
+        const sceneMove = (last && first && last.sceneMx !== null && first.sceneMx !== null)
+          ? (last.sceneMx - first.sceneMx) : null
+        log(move > 10 ? 'pass' : 'fail',
+          `corner center moved ${move.toFixed(1)}px; scene points moved ${sceneMove === null ? '-' : sceneMove.toFixed(1)}px (expect ~+39px)`)
+        finish(move > 10 ? 0 : 1)
+      } catch (e) {
+        log('fail', 'FATAL: ' + (e.stack || e))
+        finish(1)
+      }
+    }
+
+    function finish(failed) {
+      window.__TEST_DONE__ = { passed: failed ? 0 : 1, failed, runtime: build }
+    }
+  </script>
+</body>
+</html>

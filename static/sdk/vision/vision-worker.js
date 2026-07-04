@@ -15,7 +15,35 @@
 
 /* global cv, VisionPipeline, parseWebART */
 
-importScripts('../vendor/opencv.js', './webart-format.js', './pipeline.js')
+/**
+ * Runtime selection: prefer the slim SIMD build (~6x smaller, 2-4x faster
+ * feature extraction), fall back to the full universal build when the slim
+ * file is absent or the browser lacks WASM SIMD.
+ */
+let OPENCV_RUNTIME = 'full'
+;(function loadOpenCV() {
+    // Minimal wasm module using a SIMD instruction - validates only where
+    // SIMD is supported (standard wasm-feature-detect probe).
+    const SIMD_PROBE = new Uint8Array([
+        0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0,
+        10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11
+    ])
+    let simd = false
+    try { simd = WebAssembly.validate(SIMD_PROBE) } catch (e) {}
+
+    if (simd) {
+        try {
+            importScripts('../vendor/opencv-slim.js')
+            OPENCV_RUNTIME = 'slim-simd'
+            return
+        } catch (e) {
+            // slim build not deployed (or failed to parse) - use full
+        }
+    }
+    importScripts('../vendor/opencv.js')
+})()
+
+importScripts('./webart-format.js', './geometry.js', './map.js', './matcher.js', './pipeline.js')
 
 let pipeline = null
 let canvas = null
@@ -76,6 +104,9 @@ self.onmessage = async (e) => {
     try {
         if (msg.type === 'init') {
             await cvReady()
+            // SIMD Hamming matcher (7x the cv BFMatcher); pipeline falls
+            // back to the cv path when unavailable
+            if (typeof SimdMatcher !== 'undefined') await SimdMatcher.init()
             pipeline = new VisionPipeline(msg.config)
             let info
             if (msg.targetBuffer) {
@@ -88,6 +119,32 @@ self.onmessage = async (e) => {
                 self.postMessage({ type: 'error', message: 'Target compilation produced no features' })
                 return
             }
+            // Warm up the hot paths (ORB + matcher JIT/wasm tiering): the
+            // first real detect otherwise pays a ~130ms one-off spike. The
+            // pattern must be corner-RICH (random 8x8 blocks) or ORB finds
+            // nothing and the matcher never runs.
+            try {
+                const W = 480, H = 360
+                const warm = new cv.Mat(H, W, cv.CV_8U)
+                const buf = new Uint8Array(W * H)
+                let seed = 123456789
+                for (let by = 0; by < H; by += 8) {
+                    for (let bx = 0; bx < W; bx += 8) {
+                        seed = (seed * 1664525 + 1013904223) >>> 0
+                        const g = seed & 255
+                        for (let y = by; y < by + 8 && y < H; y++) {
+                            buf.fill(g, y * W + bx, y * W + Math.min(bx + 8, W))
+                        }
+                    }
+                }
+                warm.data.set(buf)
+                pipeline.processFrame(warm)
+                pipeline.processFrame(warm)   // second pass settles wasm tiering
+                warm.delete()
+                pipeline.reset()
+            } catch (e) { /* warmup is best-effort */ }
+            info.runtime = OPENCV_RUNTIME
+            info.simdMatcher = (typeof SimdMatcher !== 'undefined') && SimdMatcher.ready
             self.postMessage({ type: 'ready', info })
             return
         }

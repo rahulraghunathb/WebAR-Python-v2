@@ -27,6 +27,7 @@
     logEl.innerHTML = ''
     const results = []
     const checks = []
+    let runtime = null
 
     function log(cls, msg) {
       const d = document.createElement('div')
@@ -114,6 +115,10 @@
       const initMs = Math.round(performance.now() - t0)
       check('Engine init + target compile', readyInfo && readyInfo.ready,
         `${initMs}ms, keypoints=${readyInfo ? JSON.stringify(readyInfo.keypoints) : '-'}`)
+      if (readyInfo && readyInfo.runtime) {
+        runtime = readyInfo.runtime
+        log('info', `OpenCV runtime: ${runtime}`)
+      }
       if (!readyInfo) return finish()
 
       // 3. Feed frames sequentially (deterministic)
@@ -145,6 +150,9 @@
       const withPose = detected.filter(r => r.pose)
       check('Poses produced for detections', withPose.length === detected.length,
         `${withPose.length}/${detected.length}`)
+      // Production guarantee: without debugMap, no viz bytes ever ship
+      check('mapViz absent (zero-cost when debug off)',
+        results.every(r => !r || r.mapViz === undefined))
 
       if (withPose.length) {
         const finite = withPose.every(r => r.pose.matrix.every(v => isFinite(v)))
@@ -182,7 +190,8 @@
       const trackTimes = trackFrames.map(r => r.debug.proc_ms)
       if (detectTimes.length && trackTimes.length) {
         const avg = a => (a.reduce((s, v) => s + v, 0) / a.length).toFixed(1)
-        log('info', `avg detect: ${avg(detectTimes)}ms | avg track: ${avg(trackTimes)}ms`)
+        const mx = a => Math.max(...a).toFixed(1)
+        log('info', `avg detect: ${avg(detectTimes)}ms (max ${mx(detectTimes)}) | avg track: ${avg(trackTimes)}ms (max ${mx(trackTimes)})`)
       }
       worker.terminate()
 
@@ -253,7 +262,7 @@
       const passed = checks.filter(c => c.pass).length
       const failed = checks.length - passed
       log(failed ? 'fail' : 'pass', `========== ${passed}/${checks.length} checks passed ==========`)
-      window.__TEST_DONE__ = { passed, failed, checks, results: results.length }
+      window.__TEST_DONE__ = { passed, failed, checks, results: results.length, runtime }
     }
 
     main().catch(e => { log('fail', 'FATAL: ' + (e.stack || e)); finish() })

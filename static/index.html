@@ -301,6 +301,50 @@
         </div>
 
         <div class="info-section">
+          <div class="info-section-title">🗺️ SLAM Map</div>
+          <div class="info-row">
+            <span class="info-label">Mode</span>
+            <span class="info-value" id="infoSlamMode">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Map points</span>
+            <span class="info-value" id="infoSlamPts">0</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Dormant / Cands</span>
+            <span class="info-value" id="infoSlamDormant">0 / 0</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Noise floor</span>
+            <span class="info-value" id="infoSlamNoise">learning…</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">FAST thresh</span>
+            <span class="info-value" id="infoSlamFast">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Last drift snap</span>
+            <span class="info-value" id="infoSlamDrift">-</span>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <div class="info-section-title">⚙️ Pipeline</div>
+          <div class="info-row">
+            <span class="info-label">Proc time</span>
+            <span class="info-value" id="infoProcMs">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Vision FPS</span>
+            <span class="info-value" id="infoVisionFps">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Keypoints (detect)</span>
+            <span class="info-value" id="infoKeypoints">-</span>
+          </div>
+        </div>
+
+        <div class="info-section">
           <div class="info-section-title">📷 Camera</div>
           <div class="info-row">
             <span class="info-label">Resolution</span>
@@ -435,7 +479,15 @@
           // Client-side vision engine.
           // Target precedence: ?target=<url> query param, else the compiled
           // .webart (instant load), else the raw image (in-worker compile).
-          const customTarget = new URLSearchParams(location.search).get("target")
+          const params = new URLSearchParams(location.search)
+          const customTarget = params.get("target")
+          // DEV-ONLY SLAM map visualization (?debug=map): point cloud +
+          // camera trail. Off (production): zero extra work end to end.
+          this.debugMap = params.get("debug") === "map"
+          // ?imu=0 -> run WITHOUT motion sensors (no permission prompt).
+          // Measured tradeoff (results/imu-value-rot): position identical,
+          // rotation error 2-3x higher during motion (0.8->2.1° median).
+          this.noImu = params.get("imu") === "0"
           this.sdk = new WebARSDK({
             video: document.getElementById("videoElement"),
             targetUrl: customTarget
@@ -446,7 +498,9 @@
                 ],
             intrinsicsProvider: this.intrinsicsManager,
             maxDimension: 480,
+            pipelineConfig: this.debugMap ? { debugMap: true } : null,
           })
+          if (this.debugMap) this.modelRenderer.enableMapViz()
 
           // DOM elements
           this.video = document.getElementById("videoElement")
@@ -581,6 +635,30 @@
             this._loggedFirstDetection = true
             rlog("first-DETECTION", JSON.stringify(this.debug))
           }
+          // Log tracking-loss transitions (5s stat samples miss brief drops)
+          if (this._wasDetected && !data.detected) {
+            rlog("tracking-lost", JSON.stringify({ state: this.debug.state }))
+          } else if (this._wasDetected === false && data.detected && this._loggedFirstDetection) {
+            rlog("tracking-reacquired", JSON.stringify({
+              inliers: this.debug.inliers, proc_ms: this.debug.proc_ms,
+            }))
+          }
+          this._wasDetected = data.detected
+
+          // MBVO state transitions (poster <-> environment map) + the
+          // drift-at-reacquire metric: THE quality number for map tracking
+          if (this.debug.state !== this._lastStateLogged) {
+            rlog("state", this._lastStateLogged + " -> " + this.debug.state +
+              " (map=" + (this.debug.map_points || 0) + " pts)")
+            this._lastStateLogged = this.debug.state
+          }
+          if (this.debug.reacquire_drift_m !== undefined) {
+            rlog("reacquire-drift", JSON.stringify({
+              drift_m: this.debug.reacquire_drift_m,
+              bridged_frames: this.debug.map_frames_bridged,
+              gap_frames: this.debug.reacquire_gap_frames,
+            }))
+          }
           const now = performance.now()
           if (!this._lastStatLog || now - this._lastStatLog > 5000) {
             this._lastStatLog = now
@@ -590,13 +668,20 @@
               mode: this.debug.mode,
               keypoints: this.debug.keypoints,
               inliers: this.debug.inliers,
+              mapPts: this.debug.map_points,
+              dormant: this.debug.map_dormant,
               proc_ms: this.debug.proc_ms,
               visionFps: this.sdk.stats.fps,
               captureMs: this.sdk.stats.captureMs,
               renderFps: this.fps,
               imu: this.imuManager.isActive,
               imuData: this.imuManager.hasData(),
+              fastT: this.debug.fast_thresh,
             }))
+          }
+
+          if (this.debugMap && data.mapViz) {
+            this.modelRenderer.updateMapViz(data.mapViz)
           }
 
           if (data.detected && data.pose) {
@@ -634,9 +719,14 @@
           try {
             rlog("start-tapped")
             // Request IMU permission first (MUST be in user gesture handler for iOS)
-            this.startStatus.textContent = "Requesting motion sensors..."
-            const imuGranted = await this.imuManager.requestPermission()
-            rlog("imu-permission", imuGranted ? "granted" : "denied/unavailable")
+            let imuGranted = false
+            if (this.noImu) {
+              rlog("imu-permission", "skipped (?imu=0 - vision-only mode)")
+            } else {
+              this.startStatus.textContent = "Requesting motion sensors..."
+              imuGranted = await this.imuManager.requestPermission()
+              rlog("imu-permission", imuGranted ? "granted" : "denied/unavailable")
+            }
 
             // Update permission UI for IMU
             const motionEl = document.getElementById("permMotion")
@@ -648,6 +738,9 @@
 
               // Connect IMU manager to renderer for sensor fusion
               this.modelRenderer.setIMUManager(this.imuManager)
+            } else if (this.noImu) {
+              motionEl.textContent = "○ Motion Sensors (disabled by ?imu=0)"
+              console.log("[App] IMU disabled via ?imu=0 - vision-only")
             } else {
               motionEl.textContent = "✗ Motion Sensors"
               motionEl.classList.add("denied")
@@ -758,12 +851,62 @@
           // Show tracking state with color coding
           const state = this.debug.tracking_state || this.debug.state || "SEARCHING"
           const stateEl = document.getElementById("infoStatus")
-          stateEl.textContent = state
+          stateEl.textContent = state === "MAP_TRACKING"
+            ? "MAP (" + (this.debug.map_points || 0) + " pts)"
+            : state
           stateEl.style.color =
-            state === "TRACKING" ? "#0f0" : state === "LOST" ? "#f00" : "#fff"
+            state === "TRACKING" ? "#0f0"
+            : state === "MAP_TRACKING" ? "#0cf"
+            : state === "LOST" ? "#f00" : "#fff"
 
           document.getElementById("infoInliers").textContent =
             this.debug.inliers || 0
+
+          // --- Live SLAM map values ---
+          document.getElementById("infoSlamMode").textContent =
+            this.debug.mode || "-"
+
+          const mapPts = this.debug.map_points || 0
+          const ptsEl = document.getElementById("infoSlamPts")
+          ptsEl.textContent = mapPts
+          ptsEl.style.color =
+            mapPts >= 12 ? "#0f0" : mapPts >= 6 ? "#fa0" : "#f66"
+
+          document.getElementById("infoSlamDormant").textContent =
+            (this.debug.map_dormant || 0) + " / " + (this.debug.map_cands || 0)
+
+          document.getElementById("infoSlamNoise").textContent =
+            this.debug.noise_px != null
+              ? this.debug.noise_px.toFixed(2) + "px"
+              : "learning…"
+
+          // fast_thresh / keypoints only exist on full-detect frames - keep
+          // the last seen value instead of flickering back to "-"
+          if (this.debug.fast_thresh !== undefined)
+            this._lastFastT = this.debug.fast_thresh
+          document.getElementById("infoSlamFast").textContent =
+            this._lastFastT !== undefined ? this._lastFastT : "-"
+          if (this.debug.keypoints)
+            this._lastKeypoints = this.debug.keypoints
+          document.getElementById("infoKeypoints").textContent =
+            this._lastKeypoints !== undefined ? this._lastKeypoints : "-"
+
+          if (this.debug.reacquire_drift_m !== undefined) {
+            this._lastDrift = this.debug.reacquire_drift_m
+            this._lastDriftBridged = this.debug.map_frames_bridged || 0
+          }
+          document.getElementById("infoSlamDrift").textContent =
+            this._lastDrift !== undefined
+              ? this._lastDrift.toFixed(3) + " (" + this._lastDriftBridged + "f)"
+              : "-"
+
+          // --- Live pipeline values ---
+          document.getElementById("infoProcMs").textContent =
+            this.debug.proc_ms !== undefined
+              ? this.debug.proc_ms.toFixed(1) + "ms"
+              : "-"
+          document.getElementById("infoVisionFps").textContent =
+            (this.sdk.stats && this.sdk.stats.fps) || 0
 
           // Use tracking confidence if available
           const confidence =

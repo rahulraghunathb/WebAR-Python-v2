@@ -1,0 +1,10 @@
+{
+  "name": "seed-stability",
+  "description": "Is the 98%<->4% flip a step function or a bimodal band? 20 seeds at two blur levels",
+  "base": { "traj": "slam", "noise": 5, "shake": 1, "expo": 0.1, "gyro": 0.2, "hz": 20 },
+  "grid": { "blur": [0.10, 0.12] },
+  "seeds": 20,
+  "configs": { "baseline": {} },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

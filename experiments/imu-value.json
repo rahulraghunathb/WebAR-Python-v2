@@ -1,0 +1,13 @@
+{
+  "name": "imu-value",
+  "description": "What do the motion sensors actually buy? Fused pose error with IMU on vs off, paired seeds, across motion types",
+  "base": { "noise": 3, "blur": 0.12, "shake": 2, "expo": 0.1, "gyro": 0.2, "hz": 20 },
+  "grid": {
+    "traj": ["slam", "fastpan", "shaky", "orbit"],
+    "imu": [1, 0]
+  },
+  "seeds": 3,
+  "configs": { "baseline": {} },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

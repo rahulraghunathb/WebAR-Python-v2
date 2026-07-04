@@ -1,0 +1,13 @@
+{
+  "name": "ab-map-gates",
+  "description": "Paired A/B: do stricter bootstrap gates trade map size for cliff robustness?",
+  "base": { "traj": "slam", "noise": 4, "shake": 1, "expo": 0.1, "gyro": 0.2, "hz": 20 },
+  "grid": { "blur": { "from": 0.08, "to": 0.16, "step": 0.02 } },
+  "seeds": 6,
+  "configs": {
+    "baseline": {},
+    "strict-bootstrap": { "mapMinInliers": 10, "minBaselineM": 0.12 }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

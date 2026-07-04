@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebAR SDK - MBVO Verification (synthetic 3D scene)</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    h1 { font-size: 16px; }
+    .pass { color: #0f0; } .fail { color: #f44; } .info { color: #888; }
+    #log div { padding: 2px 0; }
+    canvas { border: 1px solid #333; image-rendering: pixelated; }
+  </style>
+</head>
+<body>
+  <h1>MBVO — marker-bootstrapped VO through the real worker (ground-truth 3D scene)</h1>
+  <p class="info">Phase 1: orbit the poster (map builds) → Phase 2: pan AWAY (poster fully
+  exits; pose must continue from the map) → Phase 3: return (reacquire + drift snap).</p>
+  <div id="log"><div class="info">Loading…</div></div>
+  <canvas id="preview" width="480" height="360"></canvas>
+
+  <script>
+    const logEl = document.getElementById('log')
+    logEl.innerHTML = ''
+    const checks = []
+    function log(cls, msg) {
+      const d = document.createElement('div')
+      d.className = cls; d.textContent = msg
+      logEl.appendChild(d)
+      console.log(`[SLAM:${cls}] ${msg}`)
+    }
+    function check(name, cond, detail) {
+      checks.push({ name, pass: !!cond })
+      log(cond ? 'pass' : 'fail', `${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  (' + detail + ')' : ''}`)
+    }
+
+    // ---------------- camera model (must match worker intrinsics) ----------------
+    const W = 480, H = 360
+    const F = W / (2 * Math.tan(Math.PI / 6))        // 60 deg horizontal -> f = 415.69
+    const FOV_V = 2 * Math.atan(H / (2 * F)) * 180 / Math.PI
+    const INTRINSICS = { fx: F, fy: F, cx: W / 2, cy: H / 2 }
+
+    // ---------------- synthetic 3D world ----------------
+    function noiseTexture(seed, size) {
+      const c = document.createElement('canvas')
+      c.width = c.height = size || 256
+      const ctx = c.getContext('2d')
+      let s = seed >>> 0
+      const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
+      ctx.fillStyle = '#777'; ctx.fillRect(0, 0, c.width, c.height)
+      for (let i = 0; i < 260; i++) {
+        const g = Math.floor(rnd() * 255)
+        ctx.fillStyle = `rgb(${g},${g},${g})`
+        const w = 4 + rnd() * 26, h = 4 + rnd() * 26
+        ctx.fillRect(rnd() * c.width, rnd() * c.height, w, h)
+      }
+      const t = new THREE.CanvasTexture(c)
+      return t
+    }
+
+    async function buildScene() {
+      const scene = new THREE.Scene()
+      scene.background = new THREE.Color(0x303030)
+
+      // Poster: matches the worker's compiled target (0.667 x 1.0 m), at the
+      // world origin in the XY plane facing +Z - the SDK's world convention.
+      const posterTex = await new Promise((res, rej) => {
+        new THREE.TextureLoader().load('/static/assets/ranger-base-image.jpg', res, undefined, rej)
+      })
+      const poster = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.667, 1.0),
+        new THREE.MeshBasicMaterial({ map: posterTex })
+      )
+      scene.add(poster)
+      scene.userData.poster = poster
+
+      // Environment: textured planes at varied depths, spread toward +X
+      // (the pan direction) so the map has something to hold on to.
+      const envSpecs = [
+        // [x, y, z, w, h, rotY]
+        [-1.1, 0.1, -0.30, 1.0, 1.0, 0.25],
+        [ 1.0, -0.1, -0.20, 0.9, 0.9, -0.15],
+        [ 1.9, 0.15, 0.05, 1.0, 0.8, -0.30],
+        [ 2.8, -0.05, -0.25, 1.1, 1.0, -0.45],
+        [ 3.6, 0.1, 0.10, 1.0, 0.9, -0.60],
+        [ 0.4, 0.75, -0.15, 0.9, 0.5, 0.0],
+        [ 1.6, -0.75, -0.10, 1.0, 0.5, -0.2],
+        [ 2.6, 0.8, -0.05, 1.0, 0.5, -0.4]
+      ]
+      envSpecs.forEach((s, i) => {
+        const m = new THREE.Mesh(
+          new THREE.PlaneGeometry(s[3], s[4]),
+          new THREE.MeshBasicMaterial({ map: noiseTexture(1234 + i * 77) })
+        )
+        m.position.set(s[0], s[1], s[2])
+        m.rotation.y = s[5]
+        scene.add(m)
+      })
+      // Big backdrop with texture so even far pans see structure
+      const back = new THREE.Mesh(
+        new THREE.PlaneGeometry(9, 4),
+        new THREE.MeshBasicMaterial({ map: noiseTexture(999, 512) })
+      )
+      back.position.set(1.5, 0, -1.0)
+      scene.add(back)
+      return scene
+    }
+
+    // ---------------- scripted trajectory (ground truth) ----------------
+    // 0-39 orbit | 40-79 pan away | 80-109 return | 110-124 parked (poster
+    // reacquire) | 125+ TELEPORT to a phase-1-like viewpoint with the poster
+    // HIDDEN: only descriptor relocalization can recover.
+    const N_FRAMES = 140
+    const TELEPORT_AT = 125
+    const ease = (a, b, t) => a + (b - a) * (t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t))
+    function cameraPose(i) {
+      let px, py, pz, tx, ty, tz
+      if (i < 40) {                       // Phase 1: strafe with poster in view
+        const t = i / 39
+        px = ease(0.0, 0.5, t); py = ease(0.0, 0.04, t); pz = ease(1.5, 1.42, t)
+        tx = 0; ty = 0; tz = 0
+      } else if (i < 80) {                // Phase 2: pan away to the right
+        const t = (i - 40) / 39
+        px = ease(0.5, 1.9, t); py = 0.04; pz = ease(1.42, 1.30, t)
+        tx = ease(0, 3.0, t); ty = 0; tz = ease(0, -0.3, t)
+      } else if (i < TELEPORT_AT) {       // Phase 3: come back (then park)
+        const t = (i - 80) / 29
+        px = ease(1.9, 0.5, t); py = 0.04; pz = ease(1.30, 1.45, t)
+        tx = ease(3.0, 0, t); ty = 0; tz = ease(-0.3, 0, t)
+      } else {                            // Phase 4: teleported viewpoint
+        // Phase-1 STARTING pose: a ~51cm jump from the parked pose. Must be
+        // far enough to break the KLT chain AND exceed the jump-gate/coast
+        // reach - with bootstrapV2 the old 25cm hop was bridged by the coast
+        // and this phase silently stopped exercising descriptor reloc.
+        px = 0.0; py = 0.0; pz = 1.5
+        tx = 0; ty = 0; tz = 0
+      }
+      return { pos: [px, py, pz], target: [tx, ty, tz] }
+    }
+
+    // Is the poster inside the view frustum (with margin)?
+    function posterVisible(camera) {
+      const p = new THREE.Vector3(0, 0, 0).project(camera)
+      return Math.abs(p.x) < 0.92 && Math.abs(p.y) < 0.92 && p.z < 1
+    }
+
+    async function main() {
+      // ---------------- renderer + readback ----------------
+      const renderer = new THREE.WebGLRenderer({ antialias: false })
+      renderer.setSize(W, H, false)
+      const rt = new THREE.WebGLRenderTarget(W, H)
+      const camera = new THREE.PerspectiveCamera(FOV_V, W / H, 0.01, 50)
+      const scene = await buildScene()
+      const pixels = new Uint8Array(W * H * 4)
+      const preview = document.getElementById('preview').getContext('2d')
+
+      function renderFrame(i) {
+        // Phase 4: the poster vanishes - the world must hold without it
+        scene.userData.poster.visible = i < TELEPORT_AT
+        const gt = cameraPose(i)
+        camera.position.set(gt.pos[0], gt.pos[1], gt.pos[2])
+        camera.lookAt(gt.target[0], gt.target[1], gt.target[2])
+        camera.updateMatrixWorld(true)
+        renderer.setRenderTarget(rt)
+        renderer.render(scene, camera)
+        renderer.readRenderTargetPixels(rt, 0, 0, W, H, pixels)
+        renderer.setRenderTarget(null)
+        // GL framebuffer is bottom-up: flip rows into ImageData
+        const img = new ImageData(W, H)
+        for (let r = 0; r < H; r++) {
+          img.data.set(pixels.subarray((H - 1 - r) * W * 4, (H - r) * W * 4), r * W * 4)
+        }
+        return img
+      }
+
+      // ---------------- worker ----------------
+      const worker = new Worker('/static/sdk/vision/vision-worker.js')
+      const pending = new Map()
+      worker.onmessage = (e) => {
+        const m = e.data
+        if (m.type === 'ready') { pending.get('ready')(m.info); return }
+        if (m.type === 'error') {
+          log('fail', 'WORKER ERROR: ' + m.message)
+          const p = pending.get(m.id !== undefined ? m.id : 'ready'); if (p) p(null)
+          return
+        }
+        if (m.type === 'result') { const p = pending.get(m.id); if (p) { pending.delete(m.id); p(m) } }
+      }
+      worker.onerror = (e) => log('fail', 'WORKER CRASH: ' + e.message)
+
+      const tgt = await (await fetch('/static/assets/ranger-base-image.webart')).arrayBuffer()
+      const info = await new Promise(res => {
+        pending.set('ready', res)
+        worker.postMessage({ type: 'init', targetBuffer: tgt }, [tgt])
+      })
+      check('engine init', info && info.ready, info ? 'runtime=' + info.runtime + ' simdMatcher=' + info.simdMatcher : '')
+      if (!info) return finish()
+
+      // ---------------- run trajectory ----------------
+      const rows = []   // {i, vis, detected, state, posErr, rotErr, debug}
+      for (let i = 0; i < N_FRAMES; i++) {
+        const img = renderFrame(i)
+        if (i % 10 === 0) preview.putImageData(img, 0, 0)
+        const vis = posterVisible(camera)
+        const gtP = camera.position.clone()
+        const gtQ = camera.quaternion.clone()
+
+        const r = await new Promise(res => {
+          pending.set(i + 1, res)
+          worker.postMessage({ type: 'frame', imageData: img, id: i + 1, intrinsics: INTRINSICS },
+            [img.data.buffer])
+        })
+
+        let posErr = null, rotErr = null
+        if (r && r.detected && r.pose) {
+          const p = r.pose.position
+          posErr = Math.hypot(p.x - gtP.x, p.y - gtP.y, p.z - gtP.z)
+          const m = new THREE.Matrix4().fromArray(r.pose.matrix)
+          const q = new THREE.Quaternion().setFromRotationMatrix(m)
+          rotErr = 2 * Math.acos(Math.min(1, Math.abs(q.dot(gtQ)))) * 180 / Math.PI
+        }
+        rows.push({
+          i, vis,
+          detected: !!(r && r.detected),
+          state: r && r.debug ? r.debug.state : '?',
+          mode: r && r.debug ? r.debug.mode : '?',
+          mapPts: r && r.debug ? r.debug.map_points : 0,
+          mapDbg: r && r.debug ? r.debug.map_dbg : undefined,
+          drift: r && r.debug ? r.debug.reacquire_drift_m : undefined,
+          bridged: r && r.debug ? r.debug.map_frames_bridged : undefined,
+          proc: r && r.debug ? r.debug.proc_ms : 0,
+          orbMs: r && r.debug ? r.debug.det_orb_ms : undefined,
+          matchMs: r && r.debug ? r.debug.det_match_ms : undefined,
+          posErr, rotErr
+        })
+      }
+      worker.terminate()
+
+      // ---------------- analysis ----------------
+      const phase1 = rows.slice(0, 40)
+      const outFrames = rows.filter(x => !x.vis)               // poster truly out of frustum
+      const acquired = phase1.findIndex(x => x.detected && x.state === 'TRACKING')
+      check('acquisition in phase 1', acquired >= 0 && acquired <= 10, `frame ${acquired}`)
+
+      const mapAtEndP1 = phase1[39].mapPts
+      check('map built while poster visible (>= 25 points)', mapAtEndP1 >= 25, `${mapAtEndP1} points`)
+
+      check('poster truly leaves the view', outFrames.length >= 20, `${outFrames.length} frames out`)
+
+      const held = outFrames.filter(x => x.detected && x.state === 'MAP_TRACKING')
+      check('pose HELD while poster gone (>= 70%)', held.length >= outFrames.length * 0.7,
+        `${held.length}/${outFrames.length} frames`)
+
+      // Error bars are REGRESSION bars calibrated to current capability:
+      // motion-only VO without bundle adjustment drifts; the product story
+      // is "drift snaps away on poster return" (verified below). The
+      // documented backlog item for tightening these is measurement
+      // re-anchoring / sliding-window BA.
+      const posErrs = held.map(x => x.posErr).filter(v => v !== null).sort((a, b) => a - b)
+      const rotErrs = held.map(x => x.rotErr).filter(v => v !== null).sort((a, b) => a - b)
+      if (posErrs.length) {
+        const medP = posErrs[Math.floor(posErrs.length / 2)]
+        const maxP = posErrs[posErrs.length - 1]
+        check('map-tracking position error: median < 15cm', medP < 0.15, `${(medP * 100).toFixed(1)}cm`)
+        check('map-tracking position error: max < 30cm', maxP < 0.30, `${(maxP * 100).toFixed(1)}cm`)
+        const medR = rotErrs[Math.floor(rotErrs.length / 2)]
+        check('map-tracking rotation error: median < 6 deg', medR < 6, `${medR.toFixed(2)} deg`)
+      } else {
+        check('map-tracking errors measurable', false, 'no held frames')
+      }
+
+      const reacq = rows.find(x => x.i >= 80 && x.state === 'TRACKING' && x.drift !== undefined)
+      check('poster reacquired with drift metric', !!reacq,
+        reacq ? `frame ${reacq.i}, drift ${(reacq.drift * 100).toFixed(1)}cm after ${reacq.bridged} bridged frames` : 'none')
+      // After reacquire the POSTER pose must be back near truth (the 18-36cm
+      // VO drift snapped away; residual is normal edge-pose error)
+      const postReacq = rows.filter(x => x.i >= 95 && x.state === 'TRACKING' && x.posErr !== null)
+      if (postReacq.length) {
+        const tail = postReacq[postReacq.length - 1]
+        check('drift SNAPS AWAY on poster return (< 8cm)', tail.posErr < 0.08,
+          `${(tail.posErr * 100).toFixed(1)}cm at frame ${tail.i}`)
+      }
+
+      // ---- Phase 4: poster-free relocalization after a teleport ----
+      const relocRows = rows.filter(x => x.mode === 'reloc')
+      check('relocalization fired (mode=reloc)', relocRows.length >= 1,
+        relocRows.map(x => 'f' + x.i).join(','))
+      const post = rows.filter(x => x.i >= TELEPORT_AT + 1)
+      const recIdx = post.findIndex(x => x.detected)
+      check('teleport + hidden poster: recovered within 8 frames',
+        recIdx >= 0 && recIdx <= 8, recIdx >= 0 ? `${recIdx + 1} frames` : 'never')
+      const postDet = post.filter(x => x.detected && x.posErr !== null)
+      if (postDet.length) {
+        const pErrs = postDet.map(x => x.posErr).sort((a, b) => a - b)
+        const medP = pErrs[Math.floor(pErrs.length / 2)]
+        // Inherits the run's terminal VO drift (~9cm) by design: the
+        // poster is hidden, so the usual drift-snap corrector cannot run
+        check('poster-free pose error: median < 20cm', medP < 0.20,
+          `${(medP * 100).toFixed(1)}cm over ${postDet.length} frames`)
+      } else {
+        check('poster-free pose measurable', false, 'no detected frames after teleport')
+      }
+      check('map rebuilt after relocalization (>= 15 pts)',
+        post.length && post[post.length - 1].mapPts >= 15,
+        `${post.length ? post[post.length - 1].mapPts : 0} pts at end`)
+
+      const avg = a => a.length ? (a.reduce((s, v) => s + v, 0) / a.length) : 0
+      const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))] : 0 }
+      const mapProc = avg(rows.filter(x => x.mode === 'map-track').map(x => x.proc))
+      const trkProc = avg(rows.filter(x => x.mode === 'track').map(x => x.proc))
+      log('info', `avg proc: poster-track ${trkProc.toFixed(1)}ms | map-track ${mapProc.toFixed(1)}ms`)
+      const allProc = rows.map(x => x.proc).filter(v => v > 0)
+      const detProc = rows.filter(x => x.mode === 'detect').map(x => x.proc)
+      log('info', `BENCH all: mean=${avg(allProc).toFixed(1)} p50=${pct(allProc, 0.5).toFixed(1)} p95=${pct(allProc, 0.95).toFixed(1)} max=${Math.max(...allProc).toFixed(1)}ms | detect frames: n=${detProc.length} mean=${avg(detProc).toFixed(1)}ms`)
+      const orbT = rows.map(x => x.orbMs).filter(v => v !== undefined)
+      const matchT = rows.map(x => x.matchMs).filter(v => v !== undefined)
+      if (orbT.length) log('info', `BENCH detect split: orb mean=${avg(orbT).toFixed(1)}ms | match mean=${avg(matchT).toFixed(1)}ms (n=${orbT.length})`)
+      const slowest = rows.slice().sort((a, b) => b.proc - a.proc).slice(0, 5)
+      log('info', 'BENCH slowest: ' + slowest.map(x =>
+        `f${x.i}/${x.mode}:${x.proc.toFixed(0)}ms(orb=${x.orbMs ?? '-'},match=${x.matchMs ?? '-'})`).join(' '))
+      log('info', `state timeline: ` + rows.map(x =>
+        x.state === 'TRACKING' ? 'T' : x.state === 'MAP_TRACKING' ? 'M' : x.state === 'LOST' ? 'L' : 's').join(''))
+      // Transition-window dump for diagnosis (ALL frames incl. poster-pose errors)
+      rows.slice(108, 127).forEach(x => {
+        log('info', `f${x.i} ${x.state}/${x.mode} map=${x.mapPts}` +
+          (x.mapDbg ? ' dbg[' + x.mapDbg + ']' : '') +
+          (x.posErr !== null ? ` pe=${(x.posErr * 100).toFixed(1)}cm` : '') +
+          (x.rotErr !== null ? ` re=${x.rotErr.toFixed(1)}d` : ''))
+      })
+
+      finish()
+    }
+
+    function finish() {
+      const passed = checks.filter(c => c.pass).length
+      const failed = checks.length - passed
+      log(failed ? 'fail' : 'pass', `========== ${passed}/${checks.length} checks passed ==========`)
+      window.__TEST_DONE__ = { passed, failed, checks }
+    }
+
+    main().catch(e => { log('fail', 'FATAL: ' + (e.stack || e)); finish() })
+  </script>
+</body>
+</html>

@@ -235,6 +235,16 @@ class WebARSDK {
         this._busy = true
 
         try {
+            // The canvas fallback must NOT be sticky for the whole session:
+            // a single early createImageBitmap failure (video not fully
+            // ready in the first frames) would otherwise pin every frame to
+            // the ~35ms main-thread path (seen dragging render fps to 29).
+            // Retry the GPU path every 5s.
+            if (this._captureMode === 'canvas' &&
+                this._captureRetryAt && t0 >= this._captureRetryAt) {
+                this._captureMode = null
+            }
+
             if (this._captureMode !== 'canvas') {
                 // GPU-accelerated capture + zero-copy transfer
                 try {
@@ -247,8 +257,10 @@ class WebARSDK {
                     this._captureMode = 'bitmap'
                     return
                 } catch (e) {
-                    // Safari/older browsers: fall through to canvas path
+                    // Safari/older browsers (or a not-yet-ready video):
+                    // fall through to the canvas path, retry GPU later
                     this._captureMode = 'canvas'
+                    this._captureRetryAt = t0 + 5000
                 }
             }
 

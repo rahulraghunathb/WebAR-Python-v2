@@ -37,6 +37,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Auto research platform outputs (tools/research.mjs)
+results/
+
 # Web
 node_modules/
 .npm

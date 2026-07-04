@@ -1,0 +1,16 @@
+{
+  "name": "fix-bootstrap",
+  "description": "Paired verdict on bootstrapV2 (honest tri gate + coast + young-point immunity + exit-window replenishment) vs baseline",
+  "base": { "traj": "slam", "shake": 1, "expo": 0.1, "gyro": 0.2, "hz": 20 },
+  "grid": {
+    "noise": [2, 4, 6],
+    "blur": [0.08, 0.14, 0.2]
+  },
+  "seeds": 5,
+  "configs": {
+    "baseline": {},
+    "bootstrapV2": { "bootstrapV2": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

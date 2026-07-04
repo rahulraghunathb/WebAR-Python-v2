@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebAR SDK - worker track diagnostics</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    .pass { color: #0f0; } .fail { color: #f44; } .info { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Worker track diagnostics</h1>
+  <p class="info">Same frames as test-pipeline.html through the REAL vision worker,
+  logging per-frame corner centers. Runtime is whatever the worker selects.</p>
+  <div id="log"></div>
+  <canvas id="frameCanvas" width="480" height="360" style="display:none"></canvas>
+
+  <script>
+    const logEl = document.getElementById('log')
+    function log(cls, msg) {
+      const d = document.createElement('div')
+      d.className = cls
+      d.textContent = msg
+      logEl.appendChild(d)
+    }
+
+    const W = 480, H = 360
+    const canvas = document.getElementById('frameCanvas')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    const FX = W / (2 * Math.tan(Math.PI / 6))
+    const INTRINSICS = { fx: FX, fy: FX, cx: W / 2, cy: H / 2 }
+
+    function renderFrame(target, t) {
+      const dx = t * 1.0
+      const dy = t * 0.4
+      const angle = (t * 0.25) * Math.PI / 180
+      const s = (160 / target.height) * (1 + t * 0.001)
+      ctx.fillStyle = '#3a3a3a'
+      ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#555'
+      ctx.fillRect(10, 10, 60, 40)
+      ctx.beginPath(); ctx.arc(430, 320, 25, 0, 7); ctx.fillStyle = '#666'; ctx.fill()
+      ctx.save()
+      ctx.translate(W / 2 + dx - 20, H / 2 + dy - 10)
+      ctx.rotate(angle)
+      ctx.scale(s, s)
+      ctx.drawImage(target, -target.width / 2, -target.height / 2)
+      ctx.restore()
+      return ctx.getImageData(0, 0, W, H)
+    }
+
+    async function main() {
+      const img = new Image()
+      img.src = '/static/assets/ranger-base-image.jpg'
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej })
+      const tc = document.createElement('canvas')
+      tc.width = img.width; tc.height = img.height
+      tc.getContext('2d').drawImage(img, 0, 0)
+      const targetData = tc.getContext('2d').getImageData(0, 0, img.width, img.height)
+
+      const worker = new Worker('/static/sdk/vision/vision-worker.js')
+      const pending = new Map()
+      worker.onmessage = (e) => {
+        const msg = e.data
+        if (msg.type === 'ready') { pending.get('ready')(msg.info); return }
+        if (msg.type === 'error') {
+          log('fail', 'WORKER ERROR: ' + msg.message)
+          const p = pending.get(msg.id !== undefined ? msg.id : 'ready')
+          if (p) p(null)
+          return
+        }
+        if (msg.type === 'result') {
+          const p = pending.get(msg.id)
+          if (p) { pending.delete(msg.id); p(msg) }
+        }
+      }
+
+      const info = await new Promise((res) => {
+        pending.set('ready', res)
+        worker.postMessage({ type: 'init', target: targetData }, [targetData.data.buffer])
+      })
+      if (!info) return finish(1, null)
+      log('info', `runtime: ${info.runtime}`)
+
+      let firstCx = null, lastCx = null
+      for (let t = 0; t < 40; t++) {
+        const frame = renderFrame(img, t)
+        const r = await new Promise((res) => {
+          pending.set(t + 1, res)
+          worker.postMessage(
+            { type: 'frame', imageData: frame, id: t + 1, intrinsics: INTRINSICS },
+            [frame.data.buffer]
+          )
+        })
+        let cx = null
+        if (r && r.corners) {
+          cx = r.corners.reduce((s, c) => s + c[0], 0) / 4
+          if (firstCx === null) firstCx = cx
+          lastCx = cx
+        }
+        log('info', `t=${t} mode=${r && r.debug ? r.debug.mode : '-'} detected=${r ? r.detected : '-'} ` +
+          `cornersCx=${cx === null ? '-' : cx.toFixed(1)} inliers=${r && r.debug ? r.debug.inliers : '-'} ` +
+          `track_points=${r && r.debug ? r.debug.track_points : '-'} state=${r && r.debug ? r.debug.state : '-'}`)
+      }
+      worker.terminate()
+      const move = (firstCx !== null && lastCx !== null) ? lastCx - firstCx : 0
+      log(move > 10 ? 'pass' : 'fail', `corner center moved ${move.toFixed(1)}px (expect ~+39px)`)
+      finish(move > 10 ? 0 : 1, info.runtime)
+    }
+
+    function finish(failed, runtime) {
+      window.__TEST_DONE__ = { passed: failed ? 0 : 1, failed, runtime }
+    }
+
+    main().catch(e => { log('fail', 'FATAL: ' + (e.stack || e)); finish(1, null) })
+  </script>
+</body>
+</html>

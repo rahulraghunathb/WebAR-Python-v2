@@ -51,6 +51,12 @@
         <option value="approach">Approach / retreat</option>
         <option value="shaky">Shaky hold</option>
         <option value="orbit">Orbit loop</option>
+        <option value="vertpan">Vertical pan (top/bottom exit)</option>
+        <option value="tilt">Tilt up/down (pure rotation)</option>
+        <option value="yaw">Yaw left/right (pure rotation)</option>
+        <option value="roll">Roll ±40°</option>
+        <option value="arc">Arc around content (±70°)</option>
+        <option value="overhead">Overhead inspection</option>
       </select>
     </label>
     <label>Pixel noise σ <span class="val" id="vNoise">2</span><input type="range" id="cNoise" min="0" max="25" value="2"/></label>
@@ -215,6 +221,40 @@
       orbit: { frames: 120, fn(i) {
         const a = ((i % 120) / 120) * Math.PI * 2
         return { pos: [Math.sin(a) * 0.9 + 0.3, 0.05, 1.35 + Math.cos(a) * 0.2], target: [0, 0, 0] }
+      } },
+      // vertical / rotational coverage - MUST stay in sync with sim.html
+      vertpan: { frames: 90, fn(i) {
+        const t = (i % 90) / 89
+        const s = Math.sin(t * Math.PI * 2)
+        return { pos: [0.25, 0.03 + s * 1.1, 1.35], target: [0, s * 0.77, 0] }
+      } },
+      tilt: { frames: 100, fn(i) {
+        const t = (i % 100) / 99
+        const s = Math.sin(t * Math.PI * 2)
+        return { pos: [0.25, 0.0, 1.15], target: [0, s * 2.0, 0.35] }
+      } },
+      yaw: { frames: 100, fn(i) {
+        const t = (i % 100) / 99
+        const s = Math.sin(t * Math.PI * 2)
+        return { pos: [0.25, 0.0, 1.15], target: [s * 2.4, 0, 0.35] }
+      } },
+      roll: { frames: 80, fn(i) {
+        const t = (i % 80) / 79
+        return { pos: [0.2, 0.02, 1.15], target: [0, 0, 0],
+                 roll: Math.sin(t * Math.PI * 2) * 0.7 }
+      } },
+      arc: { frames: 120, fn(i) {
+        const t = (i % 120) / 119
+        const th = Math.sin(t * Math.PI * 2) * 1.22
+        const R = 1.05
+        return { pos: [Math.sin(th) * R, Math.sin(th * 2) * 0.3, 0.35 + Math.cos(th) * R],
+                 target: [0, 0, 0.35] }
+      } },
+      overhead: { frames: 90, fn(i) {
+        const t = (i % 90) / 89
+        const lift = Math.sin(t * Math.PI)
+        return { pos: [0.28, 0.05 + lift * 0.95, 1.4 - lift * 0.55],
+                 target: [0, -lift * 0.25, 0.15] }
       } }
     }
 
@@ -232,6 +272,8 @@
       const tgt = [base.target[0] + shakeOffset(tSec + 11, amp * 1.5, 0), base.target[1] + shakeOffset(tSec + 11, amp * 1.5, 1), base.target[2]]
       _scratchCam.position.set(pos[0], pos[1], pos[2])
       _scratchCam.lookAt(tgt[0], tgt[1], tgt[2])
+      // in-plane camera roll (rotation about the optical axis)
+      if (base.roll) _scratchCam.rotateZ(base.roll)
       _scratchCam.updateMatrixWorld(true)
       return { pos, quat: _scratchCam.quaternion.clone() }
     }

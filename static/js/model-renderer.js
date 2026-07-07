@@ -10,10 +10,11 @@
  * - The backend sends RAW poses at ~12Hz. This renderer interpolates toward
  *   the latest pose every render frame using a TIME-BASED alpha
  *   (alpha = 1 - exp(-dt/tau)), which is frame-rate independent.
- * - IMU rotation prediction fills the gap between vision updates.
- * - Translational dead-reckoning was removed: double-integrated phone
- *   accelerometer data in a mismatched reference frame added noise, not
- *   accuracy.
+ * - VISION-ONLY since 2026-07-04: motion sensors were removed entirely
+ *   (measured cost: rotation error 2-3x higher during fast motion, position
+ *   identical - see results/imu-value-rot). Translational dead-reckoning
+ *   was removed even earlier: double-integrated phone accelerometer data in
+ *   a mismatched reference frame added noise, not accuracy.
  *
  * COORDINATE SYSTEM:
  * - World origin: Center of target image
@@ -60,18 +61,10 @@ class ModelRenderer {
         this.positionTau = 0.12
         this.rotationTau = 0.10
 
-        // IMU baseline - orientation at the moment the last vision frame was
-        // captured, used for inter-frame rotation prediction
-        this.imuOrientationBase = null
-        this.imuPredictionEnabled = true
-        this.imuHistory = new Map() // frame id -> quaternion snapshot
-
-        // Dead reckoning: how long to coast on IMU after the last vision pose
+        // Dead reckoning: how long to coast after the last vision pose
+        // (motion sensors removed 2026-07-04: vision-only smoothing)
         this.lastVisionTime = 0
         this.deadReckonLimit = 500 // ms
-
-        // IMU manager reference (set externally)
-        this.imuManager = null
 
         // Dev map visualization (created only by enableMapViz)
         this.mapViz = null
@@ -369,26 +362,6 @@ class ModelRenderer {
         this.targetQuaternion.copy(quaternion)
         this.lastDistance = distance
 
-        // SYNC: retrieve the IMU state captured when this frame was sent.
-        // pose.id is attached by the server (same id the client sent).
-        if (pose.id && this.imuHistory.has(pose.id)) {
-            const histIMU = this.imuHistory.get(pose.id)
-            this.imuOrientationBase = new THREE.Quaternion(
-                histIMU.x, histIMU.y, histIMU.z, histIMU.w
-            )
-            // Drop history entries at or before this frame
-            for (const key of this.imuHistory.keys()) {
-                if (key <= pose.id) this.imuHistory.delete(key)
-                else break
-            }
-        } else if (this.imuManager && this.imuManager.isActive) {
-            // Fallback: use current IMU if ID sync fails
-            const quat = this.imuManager.rawQuaternion || this.imuManager.quaternion
-            this.imuOrientationBase = new THREE.Quaternion(
-                quat.x, quat.y, quat.z, quat.w
-            )
-        }
-
         this.lastVisionTime = performance.now()
         this.isTracking = true
         this.show()
@@ -408,20 +381,10 @@ class ModelRenderer {
     }
 
     /**
-     * Set IMU manager reference for sensor fusion
-     */
-    setIMUManager(imuManager) {
-        this.imuManager = imuManager
-        if (this.fusion) this.fusion.setIMUProvider(imuManager)
-        console.log('[Renderer] IMU manager connected')
-    }
-
-    /**
      * Connect the Phase 2 fusion engine (takes over pose filtering)
      */
     setFusionEngine(fusion) {
         this.fusion = fusion
-        if (this.imuManager) fusion.setIMUProvider(this.imuManager)
         console.log('[Renderer] Fusion engine connected')
     }
 
@@ -543,23 +506,6 @@ class ModelRenderer {
     }
 
     /**
-     * Store IMU state for a frame being sent (synchronization)
-     */
-    saveIMUBaseline(id, quat) {
-        if (this.fusion) {
-            this.fusion.saveSnapshot(id, quat, performance.now())
-            return
-        }
-        this.imuHistory.set(id, { ...quat })
-
-        // Safety cap on history size
-        if (this.imuHistory.size > 100) {
-            const firstKey = this.imuHistory.keys().next().value
-            this.imuHistory.delete(firstKey)
-        }
-    }
-
-    /**
      * Full pose/smoothing reset (also used when the dead-reckon window expires)
      */
     resetPose() {
@@ -569,8 +515,6 @@ class ModelRenderer {
         this.lastPosition = null
         this.lastQuaternion = null
         this.lastDistance = null
-        this.imuOrientationBase = null
-        this.imuHistory.clear()
         this.isTracking = false
         console.log('[Renderer] Pose reset')
     }
@@ -623,27 +567,15 @@ class ModelRenderer {
                 this.hide()
                 this.resetPose()
             } else if (this.lastPosition && this.targetPosition) {
-                // 1. Time-based smoothing toward the latest vision pose
-                //    (frame-rate independent: alpha = 1 - exp(-dt/tau))
+                // Time-based smoothing toward the latest vision pose
+                // (frame-rate independent: alpha = 1 - exp(-dt/tau))
                 const aPos = 1 - Math.exp(-dt / this.positionTau)
                 const aRot = 1 - Math.exp(-dt / this.rotationTau)
                 this.lastPosition.lerp(this.targetPosition, aPos)
                 this.lastQuaternion.slerp(this.targetQuaternion, aRot)
 
-                // 2. IMU rotation prediction on top of the smoothed pose
-                let renderQuaternion = this.lastQuaternion
-                if (this.imuPredictionEnabled && this.imuManager &&
-                    this.imuManager.isActive && this.imuOrientationBase) {
-                    const q = this.imuManager.rawQuaternion || this.imuManager.quaternion
-                    const currentIMU = new THREE.Quaternion(q.x, q.y, q.z, q.w)
-
-                    // LOCAL delta since the last vision frame: inv(base) * current
-                    const localDelta = this.imuOrientationBase.clone().invert().multiply(currentIMU)
-                    renderQuaternion = this.lastQuaternion.clone().multiply(localDelta)
-                }
-
                 this.camera.position.copy(this.lastPosition)
-                this.camera.quaternion.copy(renderQuaternion)
+                this.camera.quaternion.copy(this.lastQuaternion)
                 this.lastDistance = this.lastPosition.length()
             }
         }

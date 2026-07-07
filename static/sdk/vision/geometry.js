@@ -358,6 +358,153 @@ function motionOnlyGN(K, R0, t0, pts3, pts2, opts) {
     }
 }
 
+/**
+ * Rotation-only alignment of two point sets related by a PURE camera
+ * rotation (the infinite homography x' ~ K R K^-1 x). Used as the tracking
+ * fallback when the poster is gone and the map cannot solve: rotation
+ * produces zero baseline, so full 6-DoF has nothing to work with - but the
+ * rotation itself is directly measurable from any tracked 2D flow.
+ *
+ * Depth-free by construction: projection is scale-invariant, so K^-1 [u,v,1]
+ * needs no depth. Translation contamination shows up as depth-dependent
+ * parallax the model cannot explain -> high meanErr; callers must gate on it.
+ *
+ * @param K     {fx, fy, cx, cy}
+ * @param prev  Float-array-like 2N: pixel positions in the previous frame
+ * @param cur   Float-array-like 2N: matched positions in the current frame
+ * @param opts  {iterations=5, huberPx=2.0, outlierPx=4.0, minInliers=8}
+ * @returns {R (camera-frame increment dR: P_cur = dR * P_prev),
+ *           inliers: Uint8Array(N), nInliers, meanErr, ok}
+ */
+function rotationOnlyGN(K, prev, cur, opts) {
+    opts = opts || {}
+    const iterations = opts.iterations || 5
+    const huber = opts.huberPx || 2.0
+    const outlierPx = opts.outlierPx || 4.0
+    const minInliers = opts.minInliers || 8
+
+    const N = Math.min(prev.length, cur.length) / 2 | 0
+    let R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    const active = new Uint8Array(N).fill(1)
+
+    // pre-lift previous pixels to unit-depth camera rays (depth-free)
+    const P0 = new Float64Array(N * 3)
+    for (let i = 0; i < N; i++) {
+        P0[i * 3] = (prev[i * 2] - K.cx) / K.fx
+        P0[i * 3 + 1] = (prev[i * 2 + 1] - K.cy) / K.fy
+        P0[i * 3 + 2] = 1
+    }
+
+    const H = new Array(9)
+    const g = new Array(3)
+    const J = new Array(6)   // 2x3 row-major
+
+    for (let it = 0; it < iterations; it++) {
+        H.fill(0); g.fill(0)
+        let used = 0
+
+        for (let i = 0; i < N; i++) {
+            if (!active[i]) continue
+            const q = matVec3(R, [P0[i * 3], P0[i * 3 + 1], P0[i * 3 + 2]])
+            if (q[2] < 0.1) { active[i] = 0; continue }
+
+            const iz = 1 / q[2]
+            const u = K.fx * q[0] * iz + K.cx
+            const v = K.fy * q[1] * iz + K.cy
+            const ex = u - cur[i * 2]
+            const ey = v - cur[i * 2 + 1]
+            const e = Math.hypot(ex, ey)
+
+            if (it > 0 && e > outlierPx * 2.5) { active[i] = 0; continue }
+            const w = e <= huber ? 1 : huber / e   // Huber IRLS weight
+
+            // J = J_pi(q) * (-[q]x)  (left perturbation dR = exp([d]x) R)
+            const fxiz = K.fx * iz, fyiz = K.fy * iz
+            const jtx = fxiz, jtz = -fxiz * q[0] * iz     // J_pi row 1: [fxiz, 0, jtz]
+            const jty = fyiz, jtz2 = -fyiz * q[1] * iz    // J_pi row 2: [0, fyiz, jtz2]
+            J[0] = 0 * -q[2] - jtz * -q[1]
+            J[1] = jtz * -q[0] - jtx * -q[2]
+            J[2] = jtx * -q[1] - 0 * -q[0]
+            J[3] = jty * -q[2] - jtz2 * -q[1]
+            J[4] = jtz2 * -q[0] - 0 * -q[2]
+            J[5] = 0 * -q[1] - jty * -q[0]
+
+            for (let r = 0; r < 3; r++) {
+                for (let c = r; c < 3; c++) {
+                    H[r * 3 + c] += w * (J[r] * J[c] + J[3 + r] * J[3 + c])
+                }
+                g[r] += w * (J[r] * ex + J[3 + r] * ey)
+            }
+            used++
+        }
+
+        if (used < minInliers) {
+            return { R, inliers: active, nInliers: 0, meanErr: Infinity, ok: false }
+        }
+
+        for (let r = 0; r < 3; r++) {
+            for (let c = 0; c < r; c++) H[r * 3 + c] = H[c * 3 + r]
+            H[r * 3 + r] *= 1.0001
+            H[r * 3 + r] += 1e-12
+        }
+
+        const d = solveSym3(H, g)
+        if (!d) break
+        const delta = [-d[0], -d[1], -d[2]]
+        R = matMul3(rodrigues(delta), R)
+
+        if (Math.hypot(delta[0], delta[1], delta[2]) < 1e-8) break
+    }
+
+    // final classification against the converged rotation
+    let nIn = 0, errSum = 0
+    const inliers = new Uint8Array(N)
+    for (let i = 0; i < N; i++) {
+        const q = matVec3(R, [P0[i * 3], P0[i * 3 + 1], P0[i * 3 + 2]])
+        if (q[2] < 0.1) continue
+        const u = K.fx * q[0] / q[2] + K.cx
+        const v = K.fy * q[1] / q[2] + K.cy
+        const e = Math.hypot(u - cur[i * 2], v - cur[i * 2 + 1])
+        if (e < outlierPx) { inliers[i] = 1; nIn++; errSum += e }
+    }
+
+    return {
+        R, inliers, nInliers: nIn,
+        meanErr: nIn ? errSum / nIn : Infinity,
+        ok: nIn >= minInliers
+    }
+}
+
+/** Solve H x = g for symmetric positive-definite 3x3 H (Cholesky). */
+function solveSym3(H, g) {
+    const L = new Array(9).fill(0)
+    for (let i = 0; i < 3; i++) {
+        for (let j = 0; j <= i; j++) {
+            let s = H[i * 3 + j]
+            for (let k = 0; k < j; k++) s -= L[i * 3 + k] * L[j * 3 + k]
+            if (i === j) {
+                if (s <= 0) return null
+                L[i * 3 + i] = Math.sqrt(s)
+            } else {
+                L[i * 3 + j] = s / L[j * 3 + j]
+            }
+        }
+    }
+    const y = new Array(3)
+    for (let i = 0; i < 3; i++) {
+        let s = g[i]
+        for (let k = 0; k < i; k++) s -= L[i * 3 + k] * y[k]
+        y[i] = s / L[i * 3 + i]
+    }
+    const x = new Array(3)
+    for (let i = 2; i >= 0; i--) {
+        let s = y[i]
+        for (let k = i + 1; k < 3; k++) s -= L[k * 3 + i] * x[k]
+        x[i] = s / L[i * 3 + i]
+    }
+    return x
+}
+
 /** Solve H x = g for symmetric positive-definite 6x6 H (Cholesky). */
 function solveCholesky6(H, g) {
     const L = new Array(36).fill(0)
@@ -393,7 +540,8 @@ const Geometry = {
     rodrigues, se3Exp, composeRT, invertRT,
     matMul3, matVec3, matTVec3, cross, dot, norm, normalize,
     project, bearingWorld, rayAngleDeg,
-    jacobiEigenSym, triangulateDLT, motionOnlyGN, solveCholesky6
+    jacobiEigenSym, triangulateDLT, motionOnlyGN, rotationOnlyGN,
+    solveCholesky6, solveSym3
 }
 
 // Exports: worker global + window + Node

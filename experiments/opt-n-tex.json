@@ -1,0 +1,13 @@
+{
+  "name": "opt-n-tex",
+  "description": "The stack across the texture axis (the low-texture dominance from opt-m must survive the huntFast+relocV3 additions). base arm = previous defaults.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20, "traj": "slam" },
+  "grid": { "tex": [0.5, 0.65, 1] },
+  "seeds": 6,
+  "configs": {
+    "base": { "harvestKernel": false, "rotOnlyHuntFast": false, "relocV3": false },
+    "stack": {}
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

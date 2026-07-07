@@ -1,0 +1,13 @@
+{
+  "name": "opt-i",
+  "description": "lkKernel (custom SIMD pyramidal KLT, tools/lk.c) vs base. LK stage measured 9-10ms -> ~3ms at 720px. Kernel is cv-faithful (diff harness: d0.00 median, dis0 on shared trajectories) but not bit-identical: expect chaos-band re-rolls on single seeds, judge medians/W-L across the battery. Border mode reflect-101 required for parity (replicate smeared edge windows and fed the exit-window bootstrap garbage).",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "base": {},
+    "kern": { "lkKernel": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

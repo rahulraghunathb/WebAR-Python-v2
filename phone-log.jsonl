@@ -1,0 +1,284 @@
+{"t":"2026-07-06T20:58:13.907Z","ip":"127.0.0.1","stage":"endpoint-test","detail":"static-server capture check"}
+{"t":"2026-07-06T20:58:14.275Z","ip":"127.0.0.1","stage":"endpoint-test","detail":"via tunnel"}
+{"t":"2026-07-06T21:12:08.403Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-06T21:12:09.086Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-06T21:12:10.000Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-06T21:12:10.825Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-06T21:12:11.142Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-06T21:12:12.225Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-06T21:12:12.991Z","ip":"127.0.0.1","stage":"start-tapped","detail":""}
+{"t":"2026-07-06T21:12:13.362Z","ip":"127.0.0.1","stage":"camera-started","detail":"720x1280"}
+{"t":"2026-07-06T21:12:13.455Z","ip":"127.0.0.1","stage":"first-result","detail":"{\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":600,\"good_matches\":0,\"inliers\":0,\"track_points\":0,\"scale_used\":0,\"map_points\":0,\"map_cands\":0,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":0,\"map_dbg\":\" rc=0F\",\"det_orb_ms\":13.6,\"fast_thresh\":20,\"det_match_ms\":2.4,\"strong\":0,\"noise_px\":null,\"proc_ms\":18.8}"}
+{"t":"2026-07-06T21:12:13.457Z","ip":"127.0.0.1","stage":"state","detail":"undefined -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-06T21:12:13.466Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":600,\"inliers\":0,\"mapPts\":0,\"dormant\":0,\"proc_ms\":18.8,\"visionFps\":1,\"captureMs\":1.9,\"renderFps\":1,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-06T21:12:16.943Z","ip":"127.0.0.1","stage":"first-DETECTION","detail":"{\"state\":\"TRACKING\",\"mode\":\"detect\",\"keypoints\":483,\"good_matches\":37,\"inliers\":26,\"track_points\":26,\"scale_used\":0.30000001192092896,\"map_points\":0,\"map_cands\":0,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":0,\"map_dbg\":\"n=0 no-prior rc=0h\",\"det_orb_ms\":5.7,\"det_match_ms\":30.2,\"t_pnp\":18.5999999998603,\"strong\":0,\"reproj\":2.41,\"noise_px\":null,\"proc_ms\":57.2,\"tracking_state\":\"TRACKING\",\"tracking_confidence\":0.7802487912860471}"}
+{"t":"2026-07-06T21:12:16.946Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":26,\"proc_ms\":57.2}"}
+{"t":"2026-07-06T21:12:16.949Z","ip":"127.0.0.1","stage":"state","detail":"SEARCHING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-06T21:12:18.495Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":73,\"mapPts\":0,\"dormant\":0,\"proc_ms\":13.1,\"visionFps\":16,\"captureMs\":1,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":0}"}
+{"t":"2026-07-06T21:12:23.495Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":73,\"mapPts\":9,\"dormant\":1,\"proc_ms\":18.3,\"visionFps\":15,\"captureMs\":0.8,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":0}"}
+{"t":"2026-07-06T21:12:28.607Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"detect\",\"keypoints\":600,\"inliers\":341,\"mapPts\":2,\"dormant\":5,\"proc_ms\":34.4,\"visionFps\":16,\"captureMs\":0.8,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-06T21:12:33.621Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":70,\"mapPts\":2,\"dormant\":5,\"proc_ms\":24.1,\"visionFps\":17,\"captureMs\":0.9,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":1,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-06T21:12:35.067Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=3 pts)"}
+{"t":"2026-07-06T21:12:36.522Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-06T21:12:36.530Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-06T21:12:36.561Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":17,\"proc_ms\":11.3}"}
+{"t":"2026-07-06T21:12:36.563Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-06T21:12:37.688Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-06T21:12:37.691Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-06T21:12:38.653Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"LOST\",\"mode\":\"detect\",\"keypoints\":258,\"inliers\":0,\"mapPts\":0,\"dormant\":5,\"proc_ms\":13.3,\"visionFps\":15,\"captureMs\":1.3,\"renderFps\":61,\"fastT\":8,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-06T21:12:38.707Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-06T21:12:40.471Z","ip":"127.0.0.1","stage":"state","detail":"SEARCHING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-06T21:12:40.475Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":8,\"proc_ms\":36.2}"}
+{"t":"2026-07-06T21:12:40.680Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-06T21:12:42.964Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-06T21:12:43.004Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.372,\"bridged_frames\":38,\"gap_frames\":2}"}
+{"t":"2026-07-06T21:12:43.437Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=9 pts)"}
+{"t":"2026-07-06T21:12:43.678Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"MAP_TRACKING\",\"mode\":\"rot-only\",\"keypoints\":0,\"inliers\":43,\"mapPts\":8,\"dormant\":5,\"proc_ms\":10,\"visionFps\":17,\"captureMs\":2,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-06T21:12:44.790Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=6 pts)"}
+{"t":"2026-07-06T21:12:44.793Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.496,\"bridged_frames\":23}"}
+{"t":"2026-07-06T21:12:48.774Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":78,\"mapPts\":17,\"dormant\":8,\"proc_ms\":12.1,\"visionFps\":18,\"captureMs\":0.8,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-06T21:12:52.255Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=2 pts)"}
+{"t":"2026-07-06T21:12:52.274Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.048,\"bridged_frames\":1,\"gap_frames\":1}"}
+{"t":"2026-07-06T21:12:52.278Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-06T21:12:53.055Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=10 pts)"}
+{"t":"2026-07-06T21:12:53.514Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=10 pts)"}
+{"t":"2026-07-06T21:12:53.517Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.038,\"bridged_frames\":9,\"gap_frames\":1}"}
+{"t":"2026-07-06T21:12:53.746Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=10 pts)"}
+{"t":"2026-07-06T21:12:53.749Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"MAP_TRACKING\",\"mode\":\"rot-only\",\"keypoints\":0,\"inliers\":73,\"mapPts\":10,\"dormant\":14,\"proc_ms\":12.3,\"visionFps\":19,\"captureMs\":0.9,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-06T21:12:54.414Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=7 pts)"}
+{"t":"2026-07-06T21:12:54.417Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.084,\"bridged_frames\":13,\"gap_frames\":1}"}
+{"t":"2026-07-06T21:12:54.464Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=7 pts)"}
+{"t":"2026-07-06T21:12:54.825Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=7 pts)"}
+{"t":"2026-07-06T21:12:54.828Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.106,\"bridged_frames\":6}"}
+{"t":"2026-07-06T21:12:57.524Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-06T21:12:57.527Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> LOST (map=6 pts)"}
+{"t":"2026-07-06T21:12:58.559Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-06T21:12:58.807Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":10,\"inliers\":0,\"mapPts\":0,\"dormant\":15,\"proc_ms\":66.1,\"visionFps\":15,\"captureMs\":1.6,\"renderFps\":61,\"fastT\":10,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-06T21:52:54.313Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/149.0.0.0 Safari/537.36"}
+{"t":"2026-07-06T21:52:54.338Z","ip":"127.0.0.1","stage":"cfg-override","detail":"{\"harvestKernel\":true}"}
+{"t":"2026-07-06T21:52:54.471Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-06T21:52:54.627Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-07T04:55:28.373Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-07T04:55:30.492Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-07T04:55:32.284Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-07T04:55:33.289Z","ip":"127.0.0.1","stage":"start-tapped","detail":""}
+{"t":"2026-07-07T04:55:33.690Z","ip":"127.0.0.1","stage":"camera-started","detail":"720x1280"}
+{"t":"2026-07-07T04:55:33.865Z","ip":"127.0.0.1","stage":"first-result","detail":"{\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":509,\"good_matches\":0,\"inliers\":0,\"track_points\":0,\"scale_used\":0,\"map_points\":0,\"map_cands\":0,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":0,\"map_dbg\":\" rc=0F\",\"det_orb_ms\":12.5,\"fast_thresh\":20,\"det_match_ms\":22.8,\"strong\":0,\"noise_px\":null,\"proc_ms\":38.2}"}
+{"t":"2026-07-07T04:55:33.868Z","ip":"127.0.0.1","stage":"state","detail":"undefined -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-07T04:55:33.874Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":509,\"inliers\":0,\"mapPts\":0,\"dormant\":0,\"proc_ms\":38.2,\"visionFps\":1,\"captureMs\":7.1,\"renderFps\":1,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-07T04:55:34.843Z","ip":"127.0.0.1","stage":"first-DETECTION","detail":"{\"state\":\"TRACKING\",\"mode\":\"detect\",\"keypoints\":600,\"good_matches\":65,\"inliers\":57,\"track_points\":57,\"scale_used\":0.30000001192092896,\"map_points\":0,\"map_cands\":17,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":17,\"map_dbg\":\"n=0 no-prior rc=0F\",\"det_orb_ms\":10.2,\"fast_thresh\":20,\"det_match_ms\":6.7,\"t_pnp\":13.800000000745058,\"strong\":1,\"reproj\":2.48,\"t_mnt\":1.900000000372529,\"noise_px\":2.48,\"proc_ms\":39.8,\"tracking_state\":\"TRACKING\",\"tracking_confidence\":0.801300764881304}"}
+{"t":"2026-07-07T04:55:34.845Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":57,\"proc_ms\":39.8}"}
+{"t":"2026-07-07T04:55:34.850Z","ip":"127.0.0.1","stage":"state","detail":"SEARCHING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:55:38.930Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":55,\"mapPts\":14,\"dormant\":2,\"proc_ms\":24.3,\"visionFps\":17,\"captureMs\":1.2,\"renderFps\":61,\"fastT\":20,\"mLk\":1,\"mCull\":1,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:55:39.270Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=9 pts)"}
+{"t":"2026-07-07T04:55:39.881Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:55:40.571Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.584,\"bridged_frames\":11,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:55:41.636Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=4 pts)"}
+{"t":"2026-07-07T04:55:42.094Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:42.165Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.339,\"bridged_frames\":9,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:55:42.769Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=3 pts)"}
+{"t":"2026-07-07T04:55:43.142Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=3 pts)"}
+{"t":"2026-07-07T04:55:43.224Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.228,\"bridged_frames\":7,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:55:43.960Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":48,\"mapPts\":3,\"dormant\":8,\"proc_ms\":24.9,\"visionFps\":18,\"captureMs\":1.7,\"renderFps\":60,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:55:45.600Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:46.089Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:46.174Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.153,\"bridged_frames\":8,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:55:49.014Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":69,\"mapPts\":2,\"dormant\":8,\"proc_ms\":18,\"visionFps\":16,\"captureMs\":1,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:55:54.117Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:55:54.124Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"MAP_TRACKING\",\"mode\":\"rot-only\",\"keypoints\":0,\"inliers\":41,\"mapPts\":1,\"dormant\":8,\"proc_ms\":23.6,\"visionFps\":17,\"captureMs\":2.7,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:55:54.294Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:55:54.325Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:55:54.634Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:55:54.637Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=1 pts)"}
+{"t":"2026-07-07T04:55:54.715Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:55:54.716Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":11,\"proc_ms\":41.9}"}
+{"t":"2026-07-07T04:55:54.772Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:55:55.349Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:55:55.414Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.14,\"bridged_frames\":12,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:55:56.631Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:56.863Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:56.864Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.175,\"bridged_frames\":5,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:55:56.908Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:57.126Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:57.127Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.203,\"bridged_frames\":4,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:55:57.209Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:57.241Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:57.242Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.188,\"bridged_frames\":1,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:55:57.389Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:57.683Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:55:57.747Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.293,\"bridged_frames\":6,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:55:58.101Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:55:58.460Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:55:58.550Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.197,\"bridged_frames\":7,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:55:59.111Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":63,\"mapPts\":0,\"dormant\":9,\"proc_ms\":14,\"visionFps\":18,\"captureMs\":2.2,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:56:04.412Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":53,\"mapPts\":16,\"dormant\":11,\"proc_ms\":12.6,\"visionFps\":19,\"captureMs\":1.1,\"renderFps\":60,\"mLk\":2,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:56:09.206Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"MAP_TRACKING\",\"mode\":\"rot-only\",\"keypoints\":568,\"inliers\":25,\"mapPts\":5,\"dormant\":17,\"proc_ms\":79.3,\"visionFps\":17,\"captureMs\":0.8,\"renderFps\":61,\"fastT\":20,\"mLk\":1,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:56:09.217Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=5 pts)"}
+{"t":"2026-07-07T04:56:09.249Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:56:09.250Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-07T04:56:10.350Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-07T04:56:10.689Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":16,\"proc_ms\":17}"}
+{"t":"2026-07-07T04:56:10.692Z","ip":"127.0.0.1","stage":"state","detail":"SEARCHING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:11.465Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=9 pts)"}
+{"t":"2026-07-07T04:56:11.750Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:56:11.753Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=3 pts)"}
+{"t":"2026-07-07T04:56:11.892Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":8,\"proc_ms\":11.8}"}
+{"t":"2026-07-07T04:56:11.895Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> MAP_TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:56:12.578Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:56:12.582Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-07T04:56:12.643Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":8,\"proc_ms\":32}"}
+{"t":"2026-07-07T04:56:12.646Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:12.795Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:56:12.796Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-07T04:56:12.875Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":10,\"proc_ms\":47.4}"}
+{"t":"2026-07-07T04:56:12.876Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:13.028Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:13.213Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:13.390Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:56:13.391Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-07T04:56:14.178Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"LOST\",\"mode\":\"detect\",\"keypoints\":145,\"inliers\":0,\"mapPts\":0,\"dormant\":29,\"proc_ms\":30.8,\"visionFps\":18,\"captureMs\":1.6,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":0}"}
+{"t":"2026-07-07T04:56:14.326Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":13,\"proc_ms\":26.8}"}
+{"t":"2026-07-07T04:56:14.327Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:14.393Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:14.782Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:14.794Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.326,\"bridged_frames\":7,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:56:14.820Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:15.640Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:56:15.834Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.477,\"bridged_frames\":16,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:56:15.972Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=8 pts)"}
+{"t":"2026-07-07T04:56:16.180Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=20 pts)"}
+{"t":"2026-07-07T04:56:16.181Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.122,\"bridged_frames\":4,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:56:16.425Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=19 pts)"}
+{"t":"2026-07-07T04:56:18.317Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=48 pts)"}
+{"t":"2026-07-07T04:56:18.318Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.116,\"bridged_frames\":42}"}
+{"t":"2026-07-07T04:56:19.226Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":105,\"mapPts\":32,\"dormant\":32,\"proc_ms\":28.9,\"visionFps\":23,\"captureMs\":1,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":5,\"mPurge\":0,\"mTri\":4,\"seed\":1}"}
+{"t":"2026-07-07T04:56:20.357Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=8 pts)"}
+{"t":"2026-07-07T04:56:20.450Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=17 pts)"}
+{"t":"2026-07-07T04:56:20.892Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.157,\"bridged_frames\":3,\"gap_frames\":8}"}
+{"t":"2026-07-07T04:56:22.420Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-07T04:56:22.466Z","ip":"127.0.0.1","stage":"cfg-override","detail":"{\"harvestKernel\":true}"}
+{"t":"2026-07-07T04:56:22.506Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-07T04:56:23.493Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-07T04:56:24.838Z","ip":"127.0.0.1","stage":"start-tapped","detail":""}
+{"t":"2026-07-07T04:56:29.556Z","ip":"127.0.0.1","stage":"start-tapped","detail":""}
+{"t":"2026-07-07T04:56:32.483Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-07T04:56:32.537Z","ip":"127.0.0.1","stage":"cfg-override","detail":"{\"harvestKernel\":true}"}
+{"t":"2026-07-07T04:56:32.583Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-07T04:56:33.477Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-07T04:56:34.539Z","ip":"127.0.0.1","stage":"start-tapped","detail":""}
+{"t":"2026-07-07T04:56:50.935Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-07T04:56:51.070Z","ip":"127.0.0.1","stage":"cfg-override","detail":"{\"harvestKernel\":true}"}
+{"t":"2026-07-07T04:56:51.404Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-07T04:56:52.217Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-07T04:56:53.612Z","ip":"127.0.0.1","stage":"start-tapped","detail":""}
+{"t":"2026-07-07T04:56:54.009Z","ip":"127.0.0.1","stage":"camera-started","detail":"720x1280"}
+{"t":"2026-07-07T04:56:54.124Z","ip":"127.0.0.1","stage":"first-result","detail":"{\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":587,\"good_matches\":0,\"inliers\":0,\"track_points\":0,\"scale_used\":0,\"map_points\":0,\"map_cands\":0,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":0,\"map_dbg\":\" rc=0F\",\"det_orb_ms\":19.8,\"fast_thresh\":20,\"det_match_ms\":4,\"strong\":0,\"noise_px\":null,\"proc_ms\":28.7}"}
+{"t":"2026-07-07T04:56:54.125Z","ip":"127.0.0.1","stage":"state","detail":"undefined -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-07T04:56:54.130Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":587,\"inliers\":0,\"mapPts\":0,\"dormant\":0,\"proc_ms\":28.7,\"visionFps\":1,\"captureMs\":2.4,\"renderFps\":1,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-07T04:56:59.180Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":22,\"inliers\":0,\"mapPts\":0,\"dormant\":0,\"proc_ms\":14.3,\"visionFps\":13,\"captureMs\":1,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-07T04:57:00.001Z","ip":"127.0.0.1","stage":"first-DETECTION","detail":"{\"state\":\"TRACKING\",\"mode\":\"detect\",\"keypoints\":586,\"good_matches\":34,\"inliers\":25,\"track_points\":25,\"scale_used\":0.30000001192092896,\"map_points\":0,\"map_cands\":0,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":0,\"map_dbg\":\"n=0 no-prior rc=0F\",\"det_orb_ms\":24.1,\"fast_thresh\":10,\"det_match_ms\":37.8,\"t_pnp\":26.90000000037253,\"strong\":0,\"reproj\":1.76,\"noise_px\":null,\"proc_ms\":101.4,\"tracking_state\":\"TRACKING\",\"tracking_confidence\":0.8259713132877933}"}
+{"t":"2026-07-07T04:57:00.004Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":25,\"proc_ms\":101.4}"}
+{"t":"2026-07-07T04:57:00.009Z","ip":"127.0.0.1","stage":"state","detail":"SEARCHING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:04.230Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":59,\"mapPts\":1,\"dormant\":6,\"proc_ms\":10.8,\"visionFps\":14,\"captureMs\":1,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:04.793Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:04.849Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:04.854Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.088,\"bridged_frames\":1,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:05.274Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:05.395Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:05.396Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.013,\"bridged_frames\":2,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:05.591Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:05.840Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.05,\"bridged_frames\":4,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:05.843Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:05.951Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:06.246Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:06.248Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.137,\"bridged_frames\":5,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:07.124Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=10 pts)"}
+{"t":"2026-07-07T04:57:07.356Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=10 pts)"}
+{"t":"2026-07-07T04:57:07.358Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.179,\"bridged_frames\":3,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:09.221Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":72,\"mapPts\":11,\"dormant\":6,\"proc_ms\":17.6,\"visionFps\":16,\"captureMs\":1.1,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:10.368Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=10 pts)"}
+{"t":"2026-07-07T04:57:10.553Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=14 pts)"}
+{"t":"2026-07-07T04:57:10.556Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.026,\"bridged_frames\":4,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:12.475Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=9 pts)"}
+{"t":"2026-07-07T04:57:14.073Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:57:14.075Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.367,\"bridged_frames\":27}"}
+{"t":"2026-07-07T04:57:14.254Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":79,\"mapPts\":2,\"dormant\":7,\"proc_ms\":31.4,\"visionFps\":18,\"captureMs\":1.1,\"renderFps\":60,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":1,\"seed\":1}"}
+{"t":"2026-07-07T04:57:15.771Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=5 pts)"}
+{"t":"2026-07-07T04:57:16.821Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.493,\"bridged_frames\":17,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:16.822Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:17.004Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:17.338Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:17.340Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.19,\"bridged_frames\":6}"}
+{"t":"2026-07-07T04:57:19.257Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":63,\"mapPts\":7,\"dormant\":7,\"proc_ms\":10.8,\"visionFps\":17,\"captureMs\":0.8,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:21.028Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=7 pts)"}
+{"t":"2026-07-07T04:57:21.783Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=4 pts)"}
+{"t":"2026-07-07T04:57:21.784Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.737,\"bridged_frames\":11}"}
+{"t":"2026-07-07T04:57:24.356Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":48,\"mapPts\":26,\"dormant\":12,\"proc_ms\":25.1,\"visionFps\":19,\"captureMs\":1.2,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:28.584Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=3 pts)"}
+{"t":"2026-07-07T04:57:28.980Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.414,\"bridged_frames\":6}"}
+{"t":"2026-07-07T04:57:28.985Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:29.316Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":52,\"mapPts\":8,\"dormant\":13,\"proc_ms\":25.3,\"visionFps\":17,\"captureMs\":0.8,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:34.789Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":66,\"mapPts\":14,\"dormant\":13,\"proc_ms\":9.6,\"visionFps\":4,\"captureMs\":0.9,\"renderFps\":15,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:35.109Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:57:35.122Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> LOST (map=2 pts)"}
+{"t":"2026-07-07T04:57:36.082Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-07T04:57:39.802Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-07T04:57:39.853Z","ip":"127.0.0.1","stage":"cfg-override","detail":"{\"splitDetect\":true}"}
+{"t":"2026-07-07T04:57:40.118Z","ip":"127.0.0.1","stage":"engine-init-start","detail":"fetching target + booting worker"}
+{"t":"2026-07-07T04:57:40.946Z","ip":"127.0.0.1","stage":"engine-ready","detail":"{\"ready\":true,\"compiled\":true,\"keypoints\":[2000,2000,1851],\"scales\":[1,0.5,0.30000001192092896],\"physical\":[0.6666666865348816,1],\"runtime\":\"slim-simd\",\"simdMatcher\":true,\"targetSource\":\"/static/assets/ranger-base-image.webart\"}"}
+{"t":"2026-07-07T04:57:42.707Z","ip":"127.0.0.1","stage":"start-tapped","detail":""}
+{"t":"2026-07-07T04:57:43.087Z","ip":"127.0.0.1","stage":"camera-started","detail":"720x1280"}
+{"t":"2026-07-07T04:57:43.259Z","ip":"127.0.0.1","stage":"first-result","detail":"{\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":600,\"good_matches\":0,\"inliers\":0,\"track_points\":0,\"scale_used\":0,\"map_points\":0,\"map_cands\":0,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":0,\"map_dbg\":\" rc=0F\",\"det_orb_ms\":17.7,\"fast_thresh\":20,\"det_match_ms\":58.7,\"strong\":0,\"noise_px\":null,\"proc_ms\":81.5,\"sd\":\"0:0R\"}"}
+{"t":"2026-07-07T04:57:43.268Z","ip":"127.0.0.1","stage":"state","detail":"undefined -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-07T04:57:43.273Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":false,\"state\":\"SEARCHING\",\"mode\":\"detect\",\"keypoints\":600,\"inliers\":0,\"mapPts\":0,\"dormant\":0,\"proc_ms\":81.5,\"visionFps\":1,\"captureMs\":1,\"renderFps\":1,\"fastT\":20,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-07T04:57:47.157Z","ip":"127.0.0.1","stage":"first-DETECTION","detail":"{\"state\":\"TRACKING\",\"mode\":\"detect\",\"keypoints\":448,\"good_matches\":21,\"inliers\":12,\"track_points\":12,\"scale_used\":0.30000001192092896,\"map_points\":0,\"map_cands\":0,\"map_dormant\":0,\"m_lk\":0,\"m_cull\":0,\"m_purge\":0,\"m_tri\":0,\"m_harv\":0,\"map_dbg\":\"n=0 no-prior rc=0F\",\"det_orb_ms\":26.1,\"fast_thresh\":18,\"det_match_ms\":12.2,\"t_pnp\":27.09999999962747,\"strong\":0,\"reproj\":0.55,\"noise_px\":null,\"proc_ms\":71.5,\"tracking_state\":\"TRACKING\",\"tracking_confidence\":0.6763331559189465,\"sd\":\"0:0R\"}"}
+{"t":"2026-07-07T04:57:47.159Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":12,\"proc_ms\":71.5}"}
+{"t":"2026-07-07T04:57:47.161Z","ip":"127.0.0.1","stage":"state","detail":"SEARCHING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:48.306Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":97,\"mapPts\":8,\"dormant\":2,\"proc_ms\":17,\"visionFps\":11,\"captureMs\":1.1,\"renderFps\":59,\"mLk\":1,\"mCull\":0,\"mPurge\":0,\"mTri\":1,\"seed\":1}"}
+{"t":"2026-07-07T04:57:51.933Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=28 pts)"}
+{"t":"2026-07-07T04:57:52.727Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=33 pts)"}
+{"t":"2026-07-07T04:57:52.730Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.027,\"bridged_frames\":11}"}
+{"t":"2026-07-07T04:57:52.873Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=21 pts)"}
+{"t":"2026-07-07T04:57:53.329Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"MAP_TRACKING\",\"mode\":\"map-track\",\"keypoints\":0,\"inliers\":10,\"mapPts\":10,\"dormant\":36,\"proc_ms\":277.2,\"visionFps\":15,\"captureMs\":1.2,\"renderFps\":61,\"mLk\":4,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:53.398Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:57:53.400Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-07T04:57:53.942Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:53.943Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":22,\"proc_ms\":33.2}"}
+{"t":"2026-07-07T04:57:54.030Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.364,\"bridged_frames\":4,\"gap_frames\":9}"}
+{"t":"2026-07-07T04:57:54.113Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:55.277Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.343,\"bridged_frames\":17}"}
+{"t":"2026-07-07T04:57:55.280Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:56.070Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=4 pts)"}
+{"t":"2026-07-07T04:57:56.911Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:57:56.912Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.318,\"bridged_frames\":12}"}
+{"t":"2026-07-07T04:57:57.594Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:57:58.332Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"MAP_TRACKING\",\"mode\":\"rot-only\",\"keypoints\":0,\"inliers\":58,\"mapPts\":1,\"dormant\":39,\"proc_ms\":16.5,\"visionFps\":8,\"captureMs\":1.2,\"renderFps\":60,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T04:57:58.421Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:57:58.508Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:57:58.947Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.545,\"bridged_frames\":2,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:57:58.949Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:59.173Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:59.772Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:57:59.855Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.354,\"bridged_frames\":1,\"gap_frames\":2}"}
+{"t":"2026-07-07T04:57:59.912Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:58:01.062Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:58:01.063Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.248,\"bridged_frames\":15,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:58:01.609Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:58:01.610Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> LOST (map=0 pts)"}
+{"t":"2026-07-07T04:58:02.449Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> SEARCHING (map=0 pts)"}
+{"t":"2026-07-07T04:58:03.442Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":32,\"proc_ms\":36.3}"}
+{"t":"2026-07-07T04:58:03.443Z","ip":"127.0.0.1","stage":"state","detail":"SEARCHING -> TRACKING (map=0 pts)"}
+{"t":"2026-07-07T04:58:03.461Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"detect\",\"keypoints\":600,\"inliers\":32,\"mapPts\":0,\"dormant\":40,\"proc_ms\":36.3,\"visionFps\":16,\"captureMs\":1.7,\"renderFps\":61,\"fastT\":10,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0}"}
+{"t":"2026-07-07T04:58:03.507Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.094,\"bridged_frames\":0}"}
+{"t":"2026-07-07T04:58:05.661Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> MAP_TRACKING (map=6 pts)"}
+{"t":"2026-07-07T04:58:06.301Z","ip":"127.0.0.1","stage":"state","detail":"MAP_TRACKING -> TRACKING (map=2 pts)"}
+{"t":"2026-07-07T04:58:06.530Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":1.265,\"bridged_frames\":1,\"gap_frames\":1}"}
+{"t":"2026-07-07T04:58:06.574Z","ip":"127.0.0.1","stage":"reacquire-drift","detail":"{\"drift_m\":0.7,\"bridged_frames\":0}"}
+{"t":"2026-07-07T04:58:08.395Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":61,\"mapPts\":35,\"dormant\":41,\"proc_ms\":18,\"visionFps\":6,\"captureMs\":1.1,\"renderFps\":61,\"mLk\":0,\"mCull\":0,\"mPurge\":0,\"mTri\":0,\"seed\":0}"}
+{"t":"2026-07-07T04:58:11.276Z","ip":"127.0.0.1","stage":"tracking-lost","detail":"{\"state\":\"LOST\"}"}
+{"t":"2026-07-07T04:58:11.277Z","ip":"127.0.0.1","stage":"state","detail":"TRACKING -> LOST (map=6 pts)"}
+{"t":"2026-07-07T04:58:11.961Z","ip":"127.0.0.1","stage":"tracking-reacquired","detail":"{\"inliers\":28,\"proc_ms\":37.8}"}
+{"t":"2026-07-07T04:58:11.963Z","ip":"127.0.0.1","stage":"state","detail":"LOST -> TRACKING (map=1 pts)"}
+{"t":"2026-07-07T04:58:13.451Z","ip":"127.0.0.1","stage":"stats","detail":"{\"detected\":true,\"state\":\"TRACKING\",\"mode\":\"track\",\"keypoints\":0,\"inliers\":97,\"mapPts\":3,\"dormant\":83,\"proc_ms\":51,\"visionFps\":11,\"captureMs\":3.3,\"renderFps\":61,\"fastT\":20,\"mLk\":0,\"mCull\":1,\"mPurge\":0,\"mTri\":0,\"seed\":1}"}
+{"t":"2026-07-07T06:23:06.295Z","ip":"127.0.0.1","stage":"page-load","detail":"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36"}
+{"t":"2026-07-07T06:23:06.448Z","ip":"127.0.0.1","stage":"cfg-override","detail":"{\"harvestKernel\":true}"}

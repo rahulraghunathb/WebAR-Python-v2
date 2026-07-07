@@ -1,0 +1,12 @@
+{
+  "name": "map-res-gates",
+  "base": { "traj": "slam", "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "hz": 20 },
+  "grid": { "px": [480, 720], "noise": [2, 6] },
+  "seeds": 6,
+  "configs": {
+    "shipped": { "resScaleMapGates": false },
+    "scaled": {}
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

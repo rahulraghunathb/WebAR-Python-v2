@@ -36,6 +36,17 @@ class WebARSDK {
         this.running = false
         this._busy = false          // one frame in flight at a time
         this._frameId = 0
+        // Production self-healing: the vision worker must never take the
+        // session down. Frame errors surface as empty results (worker
+        // side); persistent error streaks, a wedged in-flight frame, or a
+        // hard worker death trigger an automatic worker RESTART from a
+        // retained copy of the target (the original is transferred away).
+        this._targetSnapshot = null
+        this._errStreak = 0
+        this._restarts = 0
+        this._restarting = false
+        this._sentAt = 0
+        this._watchdog = null
         this._captureMode = null    // 'bitmap' | 'canvas'
         this._captureCanvas = null
         this._captureCtx = null
@@ -81,7 +92,11 @@ class WebARSDK {
         // 2. Boot the worker (loads ~11MB WASM once; cached by the browser)
         this.worker = new Worker(this.workerUrl)
         this.worker.onmessage = (e) => this._onWorkerMessage(e.data)
-        this.worker.onerror = (e) => this._emit('error', new Error('Worker error: ' + e.message))
+        this.worker.onerror = (e) => {
+            this._emit('error', new Error('Worker error: ' + e.message))
+            this._busy = false
+            if (this.ready) this._restartWorker('worker-error')
+        }
 
         const ready = new Promise((resolve, reject) => {
             this._readyResolve = resolve
@@ -97,9 +112,68 @@ class WebARSDK {
         this.running = true
         this._emit('ready', info)
 
+        // Watchdog: an in-flight frame with no reply for 4s means the
+        // worker is wedged (infinite loop / dead WASM) - restart it.
+        this._watchdog = setInterval(() => {
+            if (this.running && this._busy && !this._restarting &&
+                performance.now() - this._sentAt > 4000) {
+                this._busy = false
+                this._restartWorker('stall')
+            }
+        }, 1000)
+
         // 3. Start the frame pump
         this._pump()
         return info
+    }
+
+    /**
+     * Terminate and relaunch the vision worker from the retained target
+     * snapshot. Bounded (3 attempts per session): a worker that cannot
+     * survive re-init is reported as a fatal error instead of looping.
+     */
+    async _restartWorker(reason) {
+        if (this._restarting || !this.running || !this._targetSnapshot) return
+        if (++this._restarts > 3) {
+            this._emit('error', new Error('WebARSDK: worker unrecoverable (' + reason + ')'))
+            this.stop()
+            return
+        }
+        this._restarting = true
+        this._emit('workerrestart', { reason, attempt: this._restarts })
+        try { if (this.worker) this.worker.terminate() } catch (e) { /* already dead */ }
+
+        this.worker = new Worker(this.workerUrl)
+        this.worker.onmessage = (e) => this._onWorkerMessage(e.data)
+        this.worker.onerror = () => {
+            this._busy = false
+            this._restarting = false
+            this._restartWorker('worker-error')
+        }
+        const ready = new Promise((resolve, reject) => {
+            this._readyResolve = resolve
+            this._readyReject = reject
+        })
+        const snap = this._targetSnapshot
+        let message, transfer
+        if (snap.kind === 'webart') {
+            const b = snap.buf.slice(0)
+            message = { type: 'init', targetBuffer: b, config: this.pipelineConfig }
+            transfer = [b]
+        } else {
+            const d = new ImageData(new Uint8ClampedArray(snap.data), snap.w, snap.h)
+            message = { type: 'init', target: d, config: this.pipelineConfig }
+            transfer = [d.data.buffer]
+        }
+        this.worker.postMessage(message, transfer)
+        try {
+            await ready
+            this._errStreak = 0
+            this._busy = false
+        } catch (e) {
+            this._emit('error', e)
+        }
+        this._restarting = false
     }
 
     /** Resolve the first loadable target among the candidates. */
@@ -112,6 +186,9 @@ class WebARSDK {
                     const resp = await fetch(url)
                     if (!resp.ok) throw new Error('HTTP ' + resp.status)
                     const buffer = await resp.arrayBuffer()
+                    // retained copy: worker restarts re-init from this
+                    // without touching the network
+                    this._targetSnapshot = { kind: 'webart', buf: buffer.slice(0) }
                     return {
                         source: url,
                         message: { type: 'init', targetBuffer: buffer },
@@ -119,6 +196,11 @@ class WebARSDK {
                     }
                 }
                 const targetData = await this._loadTargetImageData(url)
+                this._targetSnapshot = {
+                    kind: 'image',
+                    data: new Uint8ClampedArray(targetData.data),
+                    w: targetData.width, h: targetData.height
+                }
                 return {
                     source: url,
                     message: { type: 'init', target: targetData },
@@ -134,6 +216,7 @@ class WebARSDK {
 
     stop() {
         this.running = false
+        if (this._watchdog) { clearInterval(this._watchdog); this._watchdog = null }
         if (this._vfcHandle && this.video.cancelVideoFrameCallback) {
             this.video.cancelVideoFrameCallback(this._vfcHandle)
         }
@@ -175,10 +258,20 @@ class WebARSDK {
             if (this._readyReject) { this._readyReject(err); this._readyReject = null }
             this._emit('error', err)
             this._busy = false
+            // persistent error streak = corrupted worker state: escalate
+            // reset -> restart instead of erroring forever
+            this._errStreak++
+            if (this._errStreak >= 8 && this.ready) {
+                this._errStreak = 0
+                this._restartWorker('error-streak')
+            } else if (this._errStreak === 3) {
+                this.resetTracking()
+            }
             return
         }
         if (msg.type === 'result') {
             this._busy = false
+            this._errStreak = 0
 
             // Stats
             const s = this.stats
@@ -217,7 +310,7 @@ class WebARSDK {
     async _captureAndSend() {
         // Backpressure: if the worker is mid-frame, skip - the next video
         // frame is always fresher than a queued one (zero queue latency).
-        if (this._busy || !this.ready) return
+        if (this._busy || !this.ready || this._restarting) return
         if (!this.video.videoWidth) return
 
         const vw = this.video.videoWidth
@@ -233,6 +326,7 @@ class WebARSDK {
 
         const t0 = performance.now()
         this._busy = true
+        this._sentAt = t0
 
         try {
             // The canvas fallback must NOT be sticky for the whole session:
@@ -253,7 +347,7 @@ class WebARSDK {
                     })
                     this.stats.captureMs = Math.round((performance.now() - t0) * 10) / 10
                     this._emit('framesent', { id, timestamp: t0 })
-                    this.worker.postMessage({ type: 'frame', bitmap, id, intrinsics }, [bitmap])
+                    this.worker.postMessage({ type: 'frame', bitmap, id, intrinsics, ts: t0 }, [bitmap])
                     this._captureMode = 'bitmap'
                     return
                 } catch (e) {
@@ -274,7 +368,7 @@ class WebARSDK {
             const imageData = this._captureCtx.getImageData(0, 0, w, h)
             this.stats.captureMs = Math.round((performance.now() - t0) * 10) / 10
             this._emit('framesent', { id, timestamp: t0 })
-            this.worker.postMessage({ type: 'frame', imageData, id, intrinsics }, [imageData.data.buffer])
+            this.worker.postMessage({ type: 'frame', imageData, id, intrinsics, ts: t0 }, [imageData.data.buffer])
         } catch (e) {
             this._busy = false
             this._emit('error', e)

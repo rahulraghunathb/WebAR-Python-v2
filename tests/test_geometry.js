@@ -193,6 +193,68 @@ for (let i = 0; i < 40; i++) points.push([(rand() - 0.5) * 2.5, (rand() - 0.5) *
     check('GN: degenerate input returns ok=false', bad.ok === false)
 }
 
+// =============== 6. rotation-only GN (the no-baseline fallback) ===============
+{
+    const A = cameraAt(10, 1.5)
+    // pure camera rotation about the center: R_B = dR R_A, t_B = dR t_A
+    const dRgt = G.rodrigues([0.02, 0.045, 0.012])   // ~2.9 deg
+    const RB = G.matMul3(dRgt, A.R)
+    const tB = G.matVec3(dRgt, A.t)
+
+    const prev = [], cur = []
+    for (const X of points) {
+        const a = G.project(K, A.R, A.t, X)
+        const b = G.project(K, RB, tB, X)
+        if (a[2] < 0.05 || b[2] < 0.05) continue
+        prev.push(a[0] + gauss(0.3), a[1] + gauss(0.3))
+        cur.push(b[0] + gauss(0.3), b[1] + gauss(0.3))
+    }
+    const N = prev.length / 2
+
+    const rotAngleDeg = (Ra, Rb) => {
+        // angle of Ra Rb^T
+        const M = G.matMul3(Ra, [Rb[0], Rb[3], Rb[6], Rb[1], Rb[4], Rb[7], Rb[2], Rb[5], Rb[8]])
+        const tr = Math.max(-1, Math.min(1, (M[0] + M[4] + M[8] - 1) / 2))
+        return Math.acos(tr) * 180 / Math.PI
+    }
+
+    const r1 = G.rotationOnlyGN(K, prev, cur, {})
+    check('rotGN: pure rotation recovered', r1.ok && rotAngleDeg(r1.R, dRgt) < 0.1,
+        `err=${rotAngleDeg(r1.R, dRgt).toFixed(4)} deg, inliers=${r1.nInliers}/${N}`)
+
+    // 20% gross outliers must not bias it
+    const curBad = cur.slice()
+    let nOut = 0
+    for (let i = 0; i < N; i++) {
+        if (i % 5 === 4) { curBad[i * 2] += (rand() - 0.5) * 80; curBad[i * 2 + 1] += (rand() - 0.5) * 80; nOut++ }
+    }
+    const r2 = G.rotationOnlyGN(K, prev, curBad, {})
+    check('rotGN: robust to 20% outliers', r2.ok && rotAngleDeg(r2.R, dRgt) < 0.25,
+        `err=${rotAngleDeg(r2.R, dRgt).toFixed(4)} deg, inliers=${r2.nInliers}/${N}`)
+
+    // TRANSLATION must not masquerade as clean rotation: 6cm lateral motion
+    // over mixed depths produces depth-dependent parallax the model cannot
+    // explain - either it fails or the survivor set/meanErr betrays it.
+    const curT = []
+    const prevT = []
+    for (const X of points) {
+        const a = G.project(K, A.R, A.t, X)
+        const b = G.project(K, A.R, [A.t[0] - 0.06 * A.R[0], A.t[1] - 0.06 * A.R[3], A.t[2] - 0.06 * A.R[6]], X)
+        if (a[2] < 0.05 || b[2] < 0.05) continue
+        prevT.push(a[0] + gauss(0.3), a[1] + gauss(0.3))
+        curT.push(b[0] + gauss(0.3), b[1] + gauss(0.3))
+    }
+    const NT = prevT.length / 2
+    const r3 = G.rotationOnlyGN(K, prevT, curT, {})
+    const masquerade = r3.ok && r3.meanErr < 2.0 && r3.nInliers > 0.8 * NT
+    check('rotGN: translation flow rejected (not a clean rotation fit)', !masquerade,
+        `ok=${r3.ok} meanErr=${isFinite(r3.meanErr) ? r3.meanErr.toFixed(2) : 'inf'} inliers=${r3.nInliers}/${NT}`)
+
+    // degenerate input
+    const r4 = G.rotationOnlyGN(K, [0, 0, 10, 10, 20, 20], [1, 1, 11, 11, 21, 21], {})
+    check('rotGN: degenerate input returns ok=false', r4.ok === false)
+}
+
 const passed = checks.filter(Boolean).length
 console.log(`========== ${passed}/${checks.length} checks passed ==========`)
 process.exit(passed === checks.length ? 0 : 1)

@@ -1,0 +1,27 @@
+{
+  "note": "same-machine perf baseline - rewrite ONLY via perf-gate --accept after an A/B-justified change",
+  "updated": "2026-07-07T06:44:24.016Z",
+  "cases": {
+    "slam720": {
+      "procP50Ms": 7.5,
+      "procP95Ms": 35.1,
+      "lostFrames": 1,
+      "heldPct": 100,
+      "rawMedianCm": 2.43
+    },
+    "fastpan720": {
+      "procP50Ms": 11.6,
+      "procP95Ms": 26.5,
+      "lostFrames": 0,
+      "heldPct": 100,
+      "rawMedianCm": 1.19
+    },
+    "tilt720": {
+      "procP50Ms": 3.6,
+      "procP95Ms": 26.3,
+      "lostFrames": 0,
+      "heldPct": 100,
+      "rawMedianCm": 2.49
+    }
+  }
+}

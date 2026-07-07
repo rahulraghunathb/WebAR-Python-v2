@@ -1,0 +1,13 @@
+{
+  "name": "opt-k",
+  "description": "harvestKernel (FAST-9 corner harvest on the resident LK-kernel frame) vs base (full ORB.detect for positions). Harvest 9ms -> ~0.5-1ms; corners same family, not identical - judge quality parity + proc win.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "base": {},
+    "hk": { "harvestKernel": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

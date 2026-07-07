@@ -43,9 +43,15 @@ let OPENCV_RUNTIME = 'full'
     importScripts('../vendor/opencv.js')
 })()
 
-importScripts('./webart-format.js', './geometry.js', './map.js', './matcher.js', './pipeline.js')
+importScripts('./webart-format.js', './geometry.js', './map.js', './matcher.js', './lk-kernel.js', './pipeline.js')
 
 let pipeline = null
+let frameErrStreak = 0
+let detWorker = null           // splitDetect: detection service sub-worker
+let detWorkerReady = false
+let currentGrayForDetect = null
+let sdReq = 0, sdRep = 0       // transport telemetry
+let sdErr = ''
 let canvas = null
 let ctx = null
 let grayMat = null
@@ -143,6 +149,64 @@ self.onmessage = async (e) => {
                 warm.delete()
                 pipeline.reset()
             } catch (e) { /* warmup is best-effort */ }
+            // SIMD KLT kernel (engaged only under cfg.lkKernel; cv fallback
+            // everywhere). Initialized AFTER the warmup ON PURPOSE: warmup
+            // frames must exercise the exact cv code sequence a kernel-less
+            // session runs - taking the kernel path there shifts cv's
+            // internal state (RNG draws consumed by RANSAC etc.) and every
+            // subsequent detect re-rolls, which landed the chaotic map
+            // bootstrap on its bad basin 4/4 seeds (measured: frame-0
+            // detect 44 vs 56 inliers WITH IDENTICAL LK RESULTS DRIVING).
+            if (typeof LkKernel !== 'undefined') await LkKernel.init()
+            // splitDetect: spawn the detection service sub-worker. Failure
+            // is non-fatal - the pipeline silently keeps its synchronous
+            // detect paths (the onDetectRequest hook stays unset).
+            if (msg.config && msg.config.splitDetect) {
+                try {
+                    detWorker = new Worker('./detect-worker.js')
+                    detWorker.onmessage = (de) => {
+                        const dm = de.data
+                        if (dm.type === 'ready') {
+                            detWorkerReady = true
+                        } else if (dm.type === 'detect-result') {
+                            sdRep++
+                            pipeline.applyDetectResult({ frameId: dm.frameId, res: dm.res })
+                        } else if (dm.type === 'error') {
+                            detWorkerReady = false
+                            sdErr = String(dm.message).slice(0, 120)
+                            pipeline.onDetectRequest = null   // permanent sync fallback
+                        }
+                    }
+                    detWorker.onerror = (ee) => {
+                        detWorkerReady = false
+                        sdErr = 'onerror:' + String(ee && ee.message).slice(0, 120)
+                        pipeline.onDetectRequest = null
+                        pipeline._detPending = null
+                    }
+                    if (msg.targetBuffer) {
+                        const copy = msg.targetBuffer.slice(0)
+                        detWorker.postMessage({ type: 'init', targetBuffer: copy, config: msg.config }, [copy])
+                    } else {
+                        detWorker.postMessage({ type: 'init', target: msg.target, config: msg.config })
+                    }
+                    pipeline.onDetectRequest = (req) => {
+                        const g = currentGrayForDetect
+                        if (!g || !detWorkerReady) return false
+                        sdReq++
+                        const buf = new Uint8Array(g.data.length)
+                        buf.set(g.data)
+                        detWorker.postMessage({
+                            type: 'detect', gray: buf.buffer, w: g.cols, h: g.rows,
+                            frameId: req.frameId, kind: req.kind,
+                            opts: req.opts, state: req.state
+                        }, [buf.buffer])
+                        return true
+                    }
+                } catch (e) {
+                    pipeline.onDetectRequest = null
+                }
+            }
+
             info.runtime = OPENCV_RUNTIME
             info.simdMatcher = (typeof SimdMatcher !== 'undefined') && SimdMatcher.ready
             self.postMessage({ type: 'ready', info })
@@ -164,10 +228,17 @@ self.onmessage = async (e) => {
                     msg.intrinsics.cy !== undefined ? msg.intrinsics.cy : gray.rows / 2
                 )
             }
-            const result = pipeline.processFrame(gray)
+            currentGrayForDetect = gray
+            const result = pipeline.processFrame(gray, msg.ts)
+            currentGrayForDetect = null
+            if (detWorker && result.debug) {
+                result.debug.sd = sdReq + ':' + sdRep + (detWorkerReady ? 'R' : '-') +
+                    (sdErr ? ' ERR ' + sdErr : '')
+            }
             result.type = 'result'
             result.id = msg.id
             if (result.pose) result.pose.id = msg.id
+            frameErrStreak = 0
             self.postMessage(result)
             return
         }
@@ -177,6 +248,22 @@ self.onmessage = async (e) => {
             return
         }
     } catch (err) {
-        self.postMessage({ type: 'error', message: String(err && err.stack || err), id: msg && msg.id })
+        if (msg && msg.type === 'frame') {
+            // Keep the result contract: the SDK's backpressure loop awaits a
+            // result per frame - an exception must degrade to "not detected",
+            // never stall the session. A streak means corrupted tracking
+            // state (half-mutated Mats): reset and rebuild.
+            frameErrStreak++
+            if (frameErrStreak >= 3 && pipeline) {
+                try { pipeline.reset() } catch (e2) { /* restart handles it */ }
+                frameErrStreak = 0
+            }
+            self.postMessage({
+                type: 'result', id: msg.id, detected: false,
+                debug: { error: String(err && err.message || err).slice(0, 300) }
+            })
+        } else {
+            self.postMessage({ type: 'error', message: String(err && err.stack || err), id: msg && msg.id })
+        }
     }
 }

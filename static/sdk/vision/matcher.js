@@ -33,9 +33,17 @@ const SimdMatcher = {
     /**
      * kNN(2) + Lowe ratio test. Inputs are CV_8U Nx32 cv.Mats (or any
      * objects exposing .rows and .data as a Uint8Array).
+     *
+     * absMax (optional): ALSO accept a best match whose absolute Hamming
+     * distance is <= absMax even when the ratio test fails. The ratio test
+     * mass-kills on self-similar low-texture scenes (best ~ second-best by
+     * construction); a genuinely re-observed corner still sits far below
+     * the ~128-bit cross-match noise floor in ABSOLUTE distance. Used by
+     * relocalization, where the downstream PnP+GN absorbs the extra
+     * outlier fraction.
      * @returns [{q, t}] like the pipeline's BFMatcher path.
      */
-    match: function (targetDesc, sceneDesc, ratio) {
+    match: function (targetDesc, sceneDesc, ratio, absMax) {
         ratio = ratio || 0.8
         const ex = SimdMatcher._ex
         const nS = sceneDesc.rows
@@ -58,7 +66,8 @@ const SimdMatcher = {
             ex.knn2(n, nSc)
             for (let i = 0; i < n; i++) {
                 const bi = OUT[i * 3]
-                if (bi >= 0 && OUT[i * 3 + 1] < ratio * OUT[i * 3 + 2]) {
+                if (bi >= 0 && (OUT[i * 3 + 1] < ratio * OUT[i * 3 + 2] ||
+                                (absMax && OUT[i * 3 + 1] <= absMax))) {
                     out.push({ q: off + i, t: bi })
                 }
             }

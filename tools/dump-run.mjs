@@ -23,9 +23,23 @@ await browser.close(); chrome.kill()
 if (!done) { console.error('TIMEOUT'); process.exit(2) }
 
 const m = done.metrics || {}
-console.log(`held=${m.heldPct}% mapPeak=${m.mapPeak} det=${m.detectionRate} profile=${JSON.stringify(m.profile)}`)
+console.log('METRICS ' + JSON.stringify(m, (k, v) => k === 'timeline' ? undefined : v))
 if (!done.rows) { console.error('no rows (missing &dump=1?)'); process.exit(2) }
-console.log('  i st md         inl map cnd drm S  reproj noise   posErr vis dbg')
+if (process.argv.includes('--sums')) {
+  // map point-flow ledger totals + state occupancy: the one-line answer to
+  // "where do candidates/points die differently between two runs"
+  const s = { lk: 0, cu: 0, pu: 0, tr: 0, hv: 0, detectFrames: 0, states: {} }
+  for (const r of done.rows) {
+    s.lk += r.lk || 0; s.cu += r.cu || 0; s.pu += r.pu || 0
+    s.tr += r.tr || 0; s.hv += r.hv || 0
+    if (r.md === 'detect') s.detectFrames++
+    s.states[r.st] = (s.states[r.st] || 0) + 1
+  }
+  console.log('SUMS ' + JSON.stringify(s))
+  process.exit(0)
+}
+console.log('  i st md         inl map cnd drm S  reproj noise   posErr vis  -lk -cu -pu +tr +hv dbg')
+const dash = v => v ? String(v) : '.'
 for (const r of done.rows) {
   console.log(
     String(r.i).padStart(3) + ' ' + r.st + '  ' + String(r.md || '').padEnd(10) +
@@ -35,5 +49,7 @@ for (const r of done.rows) {
     String(r.nz != null ? r.nz.toFixed(2) : '-').padStart(6) +
     String(r.pe != null ? r.pe + 'cm' : '-').padStart(9) +
     String(r.vis).padStart(4) +
+    dash(r.lk).padStart(5) + dash(r.cu).padStart(4) + dash(r.pu).padStart(4) +
+    dash(r.tr).padStart(4) + dash(r.hv).padStart(4) +
     (r.dbg ? '  ' + r.dbg : ''))
 }

@@ -83,6 +83,26 @@ const QMath = {
         return 2 * Math.acos(w) * 180 / Math.PI
     },
 
+    /** Rotation vector (axis*angle, rad) of a unit quaternion. */
+    toRotVec(q) {
+        // shortest arc: flip to positive w hemisphere
+        const s = q.w < 0 ? -1 : 1
+        const x = q.x * s, y = q.y * s, z = q.z * s, w = Math.min(1, q.w * s)
+        const vn = Math.hypot(x, y, z)
+        if (vn < 1e-9) return { x: 0, y: 0, z: 0 }
+        const angle = 2 * Math.atan2(vn, w)
+        const k = angle / vn
+        return { x: x * k, y: y * k, z: z * k }
+    },
+
+    /** Unit quaternion from a rotation vector (axis*angle, rad). */
+    fromRotVec(v) {
+        const angle = Math.hypot(v.x, v.y, v.z)
+        if (angle < 1e-9) return { x: 0, y: 0, z: 0, w: 1 }
+        const s = Math.sin(angle / 2) / angle
+        return { x: v.x * s, y: v.y * s, z: v.z * s, w: Math.cos(angle / 2) }
+    },
+
     /** Quaternion from a column-major 4x4 (rotation part must be orthonormal). */
     fromMatrixColMajor(m) {
         // Column-major: m[0],m[1],m[2] = first column, etc.
@@ -109,6 +129,26 @@ const QMath = {
 }
 
 const FUSION_DEFAULTS = {
+    // --- PREDICTIVE MODE (v2, 2026-07-04 latency round) ---
+    // The classic filter smooths TOWARD stale measurements: during motion
+    // the on-screen pose lags by (pose age + tau) x velocity. Predictive
+    // mode estimates BODY ANGULAR VELOCITY FROM VISION (no IMU needed),
+    // dead-reckons rotation between corrections exactly like the removed
+    // IMU path did, and absorbs corrections with much tighter taus - the
+    // motion model, not the lag, provides the smoothness.
+    predictive: true,      // default ON (paired sweep: fused error + rot p90
+                           // improve or tie on every trajectory; set false
+                           // for the classic lag-smoothing behavior)
+    wTau: 0.15,            // s - angular-velocity estimator time constant
+    wDecayTau: 0.30,       // s - w decay during vision gaps
+    maxW: 4.0,             // rad/s clamp (hand-held rotation bound)
+    tauRotP: 0.04,         // s - rotation correction tau in predictive mode
+    tauPosP: 0.02,         // s - position correction tau in predictive mode
+    velTauP: 0.06,         // s - velocity estimator tau in predictive mode
+    velDecayTauP: 0.18,    // s - faster dropout decay: the tighter predictor
+                           // carries more velocity into a dropout, so it must
+                           // bleed it sooner to stay inside the coast bound
+
     tauRot: 0.10,          // s - rotation correction time constant
     tauPos: 0.03,          // s - position correction time constant
     velTau: 0.10,          // s - velocity estimator time constant (rate-independent
@@ -122,7 +162,29 @@ const FUSION_DEFAULTS = {
     maxVel: 2.0,           // m/s clamp (hand-held motion bound)
     deadReckonMs: 600,     // coast on IMU this long after last vision pose
     historySize: 90,       // state ring buffer (~1.5s at 60Hz)
-    snapshotCap: 120       // max stored per-frame IMU snapshots
+    snapshotCap: 120,      // max stored per-frame IMU snapshots
+
+    // --- fusionV2: windowed weighted-LSQ velocity ---
+    // The incremental (alpha-beta) velocity estimator differentiates
+    // consecutive NOISY innovation pairs - its output noise is what
+    // dominates fused error over raw (measured 2.08cm fused vs 0.83 raw
+    // at 720px). fusionV2 fits v by weighted linear regression over the
+    // last velWinN vision positions at their CAPTURE times (recency-
+    // weighted, exp(-age/velWinTau)): ~3x less velocity noise at K=5,
+    // and irregular correction DELIVERY stops mattering because the fit
+    // uses capture timestamps.
+    fusionV2: false,       // REJECTED by opt-j (kept for the record): fused
+                           // error got WORSE where it was meant to help -
+                           // fastpan fusedMedian 1.65->1.93 (4/4 pairs),
+                           // slam +0.13. The window fit LAGS real
+                           // accelerations (fastpan is sinusoidal; constant
+                           // -velocity over a 250ms window is a systematic
+                           // bias there), while the incremental estimator
+                           // at predictive taus (velTauP 0.06) already has
+                           // the bandwidth. Revisit only with an
+                           // acceleration term or much shorter windows.
+    velWinN: 6,            // history samples in the fit
+    velWinTau: 0.10        // s - recency weighting of the fit
 }
 
 class FusionEngine {
@@ -133,6 +195,8 @@ class FusionEngine {
         this.q = QMath.identity()       // camera orientation (local->world)
         this.p = { x: 0, y: 0, z: 0 }   // camera position (m)
         this.v = { x: 0, y: 0, z: 0 }   // camera velocity (m/s)
+        this.w = { x: 0, y: 0, z: 0 }   // body angular velocity (rad/s),
+                                        // estimated FROM VISION (predictive mode)
 
         // Pending error-state corrections (absorbed over tau)
         this.qErr = QMath.identity()    // local-frame rotation residual
@@ -154,6 +218,9 @@ class FusionEngine {
         this.history = []               // [{t, q, p}]
         this.snapshots = new Map()      // frameId -> {q: imu quat, t: capture time}
 
+        // fusionV2: vision positions at CAPTURE time for the velocity fit
+        this._visHist = []              // [{t, x, y, z}]
+
         // Vision bookkeeping
         this.tracking = false
         this.lastVisionTime = -Infinity
@@ -166,10 +233,15 @@ class FusionEngine {
         this.imuProvider = provider
     }
 
-    /** Record the IMU orientation at the moment frame `id` was captured. */
+    /**
+     * Record frame `id`'s CAPTURE TIME (and optionally the IMU orientation
+     * at that moment). The timestamp drives latency compensation and is
+     * valuable even with no IMU at all - pass quat=null in vision-only mode.
+     */
     saveSnapshot(id, quat, t) {
-        if (!quat) return
-        this.snapshots.set(id, { q: { x: quat.x, y: quat.y, z: quat.z, w: quat.w }, t })
+        this.snapshots.set(id, {
+            q: quat ? { x: quat.x, y: quat.y, z: quat.z, w: quat.w } : null, t
+        })
         if (this.snapshots.size > this.cfg.snapshotCap) {
             const first = this.snapshots.keys().next().value
             this.snapshots.delete(first)
@@ -204,11 +276,13 @@ class FusionEngine {
             this.q = zq
             this.p = Object.assign({}, zp)
             this.v = { x: 0, y: 0, z: 0 }
+            this.w = { x: 0, y: 0, z: 0 }
             this.qErr = QMath.identity()
             this.pErr = { x: 0, y: 0, z: 0 }
             this.pCorrAccum = { x: 0, y: 0, z: 0 }
             this.tracking = true
             this.history.length = 0
+            this._visHist.length = 0
             this._resyncIMU()
         } else {
             // Innovation against the state we had AT CAPTURE TIME, plus the
@@ -223,18 +297,63 @@ class FusionEngine {
                 z: zp.z - h.p.z - (this.pCorrAccum.z - ca.z)
             }
 
-            // Velocity update (beta term of an alpha-beta filter), driven by
-            // the INNOVATION INCREMENT: only error that is NEW since the
-            // previous update (raw innovation re-measures un-absorbed error
-            // and diverges at high rates). Gain is time-constant based so
-            // the estimator bandwidth (~1/velTau) is vision-rate independent
-            // - a fixed beta/dt gain amplifies measurement noise into m/s of
-            // velocity at 60Hz.
-            if (this.lastVision && tc > this.lastVision.t) {
+            // Velocity update. fusionV2: weighted linear regression of the
+            // last velWinN vision POSITIONS at their CAPTURE times - the
+            // incremental estimator below differentiates consecutive noisy
+            // innovation pairs and its noise dominates fused error; a
+            // windowed fit averages it down (~3x at K=5) and is immune to
+            // irregular correction DELIVERY (the fit runs on capture
+            // timestamps). Recency weighting keeps bandwidth during real
+            // accelerations; a >0.5s hole flushes the window (stale motion
+            // must not vote after a dropout).
+            if (this.cfg.fusionV2) {
+                const c = this.cfg
+                const H = this._visHist
+                if (H.length && tc - H[H.length - 1].t > 500) H.length = 0
+                if (!H.length || tc > H[H.length - 1].t) {
+                    H.push({ t: tc, x: zp.x, y: zp.y, z: zp.z })
+                    if (H.length > (c.velWinN || 6)) H.shift()
+                }
+                if (H.length >= 3) {
+                    const tauMs = 1000 * (c.velWinTau || 0.1)
+                    let sw = 0, st = 0, sx = 0, sy = 0, sz = 0
+                    for (const s of H) {
+                        const wgt = Math.exp((s.t - tc) / tauMs)
+                        sw += wgt; st += wgt * s.t
+                        sx += wgt * s.x; sy += wgt * s.y; sz += wgt * s.z
+                    }
+                    const tb = st / sw, xb = sx / sw, yb = sy / sw, zb = sz / sw
+                    let stt = 0, sxt = 0, syt = 0, szt = 0
+                    for (const s of H) {
+                        const wgt = Math.exp((s.t - tc) / tauMs)
+                        const dt_ = (s.t - tb) / 1000
+                        stt += wgt * dt_ * dt_
+                        sxt += wgt * dt_ * (s.x - xb)
+                        syt += wgt * dt_ * (s.y - yb)
+                        szt += wgt * dt_ * (s.z - zb)
+                    }
+                    if (stt > 1e-6) {
+                        this.v.x = sxt / stt
+                        this.v.y = syt / stt
+                        this.v.z = szt / stt
+                        const sp = Math.hypot(this.v.x, this.v.y, this.v.z)
+                        if (sp > c.maxVel) {
+                            const k = c.maxVel / sp
+                            this.v.x *= k; this.v.y *= k; this.v.z *= k
+                        }
+                    }
+                }
+            } else if (this.lastVision && tc > this.lastVision.t) {
+                // Classic: beta term of an alpha-beta filter, driven by the
+                // INNOVATION INCREMENT - only error that is NEW since the
+                // previous update (raw innovation re-measures un-absorbed
+                // error and diverges at high rates). Gain is time-constant
+                // based so the estimator bandwidth (~1/velTau) is
+                // vision-rate independent.
                 const dtc = (tc - this.lastVision.t) / 1000
                 if (dtc > 1e-3 && dtc < 0.5) {
                     const c = this.cfg
-                    const kv = (1 - Math.exp(-dtc / c.velTau)) / dtc
+                    const kv = (1 - Math.exp(-dtc / (c.predictive ? c.velTauP : c.velTau))) / dtc
                     this.v.x += kv * (r.x - this.pErr.x)
                     this.v.y += kv * (r.y - this.pErr.y)
                     this.v.z += kv * (r.z - this.pErr.z)
@@ -247,6 +366,28 @@ class FusionEngine {
             }
 
             this.pErr = r
+
+            // Vision-derived BODY angular velocity (predictive mode): the
+            // rotation between consecutive vision quats over their capture
+            // interval. This is the dead-reckoning source that replaced the
+            // IMU - measured from the same camera, zero extra sensors.
+            if (this.cfg.predictive && this.lastVision && tc > this.lastVision.t) {
+                const dtw = (tc - this.lastVision.t) / 1000
+                if (dtw > 1e-3 && dtw < 0.5) {
+                    const dq = QMath.multiply(QMath.conjugate(this.lastVision.q), zq)
+                    const rv = QMath.toRotVec(dq)
+                    let wx = rv.x / dtw, wy = rv.y / dtw, wz = rv.z / dtw
+                    const wm = Math.hypot(wx, wy, wz)
+                    if (wm > this.cfg.maxW) {
+                        const k = this.cfg.maxW / wm
+                        wx *= k; wy *= k; wz *= k
+                    }
+                    const kw = 1 - Math.exp(-dtw / this.cfg.wTau)
+                    this.w.x += kw * (wx - this.w.x)
+                    this.w.y += kw * (wy - this.w.y)
+                    this.w.z += kw * (wz - this.w.z)
+                }
+            }
         }
 
         this.lastVision = { t: tc, p: Object.assign({}, zp), q: zq }
@@ -287,19 +428,38 @@ class FusionEngine {
             }
             if (imuNow) this.imuPrev = imuNow
 
+            // 1b. PREDICTIVE rotation dead-reckoning from the vision-derived
+            // angular velocity - only when no IMU is feeding deltas (never
+            // double-integrate). Decays during dropouts like linear velocity.
+            if (c.predictive && !imuNow) {
+                if (now - this.lastVisionTime > c.velDecayAfterMs) {
+                    const dw = Math.exp(-dt / c.wDecayTau)
+                    this.w.x *= dw; this.w.y *= dw; this.w.z *= dw
+                }
+                if (Math.hypot(this.w.x, this.w.y, this.w.z) > 1e-4) {
+                    const step = QMath.fromRotVec({
+                        x: this.w.x * dt, y: this.w.y * dt, z: this.w.z * dt
+                    })
+                    this.q = QMath.normalize(QMath.multiply(this.q, step))
+                }
+            }
+
             // 2. TRANSLATION PROPAGATION: constant velocity; decay only once
             // vision goes quiet (dropout coasting), never against fresh data
             if (now - this.lastVisionTime > c.velDecayAfterMs) {
-                const decay = Math.exp(-dt / c.velDecayTau)
+                const decay = Math.exp(-dt / (c.predictive ? c.velDecayTauP : c.velDecayTau))
                 this.v.x *= decay; this.v.y *= decay; this.v.z *= decay
             }
             this.p.x += this.v.x * dt
             this.p.y += this.v.y * dt
             this.p.z += this.v.z * dt
 
-            // 3. ABSORB CORRECTIONS (error feedback, time-constant based)
-            const kr = 1 - Math.exp(-dt / c.tauRot)
-            const kp = 1 - Math.exp(-dt / c.tauPos)
+            // 3. ABSORB CORRECTIONS (error feedback, time-constant based).
+            // Predictive mode: much tighter taus - the motion model provides
+            // smoothness, so corrections can land almost immediately instead
+            // of being bled in (bleeding IS the perceived latency).
+            const kr = 1 - Math.exp(-dt / (c.predictive ? c.tauRotP : c.tauRot))
+            const kp = 1 - Math.exp(-dt / (c.predictive ? c.tauPosP : c.tauPos))
 
             const qStep = QMath.slerp(QMath.identity(), this.qErr, kr)
             this.q = QMath.normalize(QMath.multiply(this.q, qStep))
@@ -331,6 +491,7 @@ class FusionEngine {
         this.q = QMath.identity()
         this.p = { x: 0, y: 0, z: 0 }
         this.v = { x: 0, y: 0, z: 0 }
+        this.w = { x: 0, y: 0, z: 0 }
         this.qErr = QMath.identity()
         this.pErr = { x: 0, y: 0, z: 0 }
         this.pCorrAccum = { x: 0, y: 0, z: 0 }

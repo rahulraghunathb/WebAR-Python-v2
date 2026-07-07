@@ -1,0 +1,26 @@
+{
+  "note": "WORLD-CLASS GOAL GATE targets - the loop runs until tools/goal-gate.mjs reports ALL ACHIEVED. Targets are fixed on purpose; do not lower them to pass. Raise them only with a documented rationale in GOALS.md.",
+  "created": "2026-07-07",
+  "cases": {
+    "slam720": "traj=slam&px=720&seed=1",
+    "fastpan720": "traj=fastpan&px=720&seed=1",
+    "tilt720": "traj=tilt&px=720&seed=1",
+    "slam720hz60": "traj=slam&px=720&seed=1&hz=60",
+    "slam720tex05": "traj=slam&px=720&seed=1&tex=0.5"
+  },
+  "goals": [
+    { "id": "G1a", "name": "poster-visible position", "kind": "metric", "case": "fastpan720", "metric": "rawMedianCm", "target": 0.30 },
+    { "id": "G1b", "name": "poster-visible rotation", "kind": "metric", "case": "fastpan720", "metric": "rotMedianDeg", "target": 0.10 },
+    { "id": "G2a", "name": "held drift @60Hz", "kind": "metric", "case": "slam720hz60", "metric": "fusedP90Cm", "target": 5.0 },
+    { "id": "G2b", "name": "held drift @20Hz", "kind": "metric", "case": "slam720", "metric": "fusedP90Cm", "target": 8.0 },
+    { "id": "G3", "name": "pose age @60Hz", "kind": "metric", "case": "slam720hz60", "metric": "poseAgeP50Ms", "target": 17.0 },
+    { "id": "G4a", "name": "zero lost frames (all cases)", "kind": "sweep", "metric": "lostFrames", "target": 0 },
+    { "id": "G4b", "name": "held 100% (all cases, incl. tex 0.5)", "kind": "sweep", "metric": "heldPct", "target": 100, "direction": "min" },
+    { "id": "G4c", "name": "test-slam suite", "kind": "suite", "page": "test-slam.html", "target": 14 },
+    { "id": "G5a", "name": "proc slam", "kind": "metric", "case": "slam720", "metric": "procP50Ms", "target": 5.0 },
+    { "id": "G5b", "name": "proc fastpan", "kind": "metric", "case": "fastpan720", "metric": "procP50Ms", "target": 8.0 },
+    { "id": "G5c", "name": "proc tilt", "kind": "metric", "case": "tilt720", "metric": "procP50Ms", "target": 3.0 },
+    { "id": "G6", "name": "reloc snap accuracy", "kind": "metric", "case": "slam720", "metric": "relocSnapCm", "target": 1.0 },
+    { "id": "G7", "name": "vision core bundle (gzip)", "kind": "file", "file": "static/sdk/vendor/opencv-slim.js.gz", "target": 512000 }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "opt-f",
+  "description": "v2 pack value: chainGuard (phantom-resurrection kill) + relocV2 (small-bank reloc) vs base. Expect neutrality on fastpan/tilt; slam teleport rows change SEMANTICS (honest LOST/freeze replaces phantom tracking) - read slam rows manually, do not trust aggregates there.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "base": {},
+    "pack": { "chainGuard": true, "relocV2": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

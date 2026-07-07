@@ -128,7 +128,7 @@
         const r = await new Promise((res) => {
           pending.set(t + 1, res)
           worker.postMessage(
-            { type: 'frame', imageData: frame, id: t + 1, intrinsics: INTRINSICS },
+            { type: 'frame', imageData: frame, id: t + 1, intrinsics: INTRINSICS, ts: (t + 1) * 50 },
             [frame.data.buffer]
           )
         })
@@ -246,7 +246,7 @@
         const r = await new Promise((res) => {
           pending.set(t + 1, res)
           worker.postMessage(
-            { type: 'frame', imageData: frame, id: t + 1, intrinsics: INTRINSICS },
+            { type: 'frame', imageData: frame, id: t + 1, intrinsics: INTRINSICS, ts: (t + 1) * 50 },
             [frame.data.buffer]
           )
         })

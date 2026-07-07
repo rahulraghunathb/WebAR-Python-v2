@@ -19,7 +19,7 @@
  * X right, Y up, Z out of the target toward the viewer, meters.
  *
  * Load order: aframe.js, fusion.js, webar-sdk.js, then this file.
- * Optional: device-motion.js (IMU fusion), camera-intrinsics.js (FOV).
+ * Optional: camera-intrinsics.js (FOV).
  */
 
 /* global AFRAME, WebARSDK, FusionEngine, THREE */
@@ -46,11 +46,9 @@ AFRAME.registerSystem('webar', {
         // Optional managers (graceful if their scripts are not loaded)
         this.intrinsics = (typeof CameraIntrinsicsManager !== 'undefined')
             ? new CameraIntrinsicsManager() : null
-        this.imu = (typeof DeviceMotionManager !== 'undefined')
-            ? new DeviceMotionManager() : null
 
+        // Vision-only fusion (motion sensors removed 2026-07-04)
         this.fusion = new FusionEngine()
-        if (this.imu) this.fusion.setIMUProvider(this.imu)
 
         this.sdk = new WebARSDK({
             video: this.video,
@@ -59,10 +57,9 @@ AFRAME.registerSystem('webar', {
             maxDimension: this.data.maxDimension
         })
 
-        this.sdk.on('framesent', ({ id }) => {
-            if (this.imu && this.imu.isActive) {
-                this.fusion.saveSnapshot(id, this.imu.rawQuaternion || this.imu.quaternion, performance.now())
-            }
+        this.sdk.on('framesent', ({ id, timestamp }) => {
+            // capture-time snapshot drives the fusion latency compensation
+            this.fusion.saveSnapshot(id, null, timestamp || performance.now())
         })
         this.sdk.on('result', (data) => {
             if (data.detected && data.pose) this.fusion.pushVisionPose(data.pose)
@@ -100,10 +97,9 @@ AFRAME.registerSystem('webar', {
         this.video = v
     },
 
-    /** Start camera + IMU. MUST be called from a user gesture on mobile. */
+    /** Start the camera. MUST be called from a user gesture on mobile. */
     startCamera: async function () {
         if (this.cameraStarted) return
-        if (this.imu) await this.imu.requestPermission()
 
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {

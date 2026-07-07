@@ -1,0 +1,13 @@
+{
+  "name": "opt-h",
+  "description": "driftComp (drift back-propagation at reacquisition) vs base. Expected: metric ties on this battery (fastpan/tilt inert, slam poster-present through the improved window); the win is structural - map 3->18 pts + corrected candidate anchors (+tr 12 same-frame) after the drifty reacquisition, traced in slam seed1 dumps. Verdict bar: NO regression anywhere.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "base": {},
+    "dc": { "driftComp": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

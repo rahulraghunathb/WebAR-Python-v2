@@ -1,0 +1,12 @@
+{
+  "name": "opt-a",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "off": {},
+    "on": { "perfV1": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

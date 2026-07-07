@@ -42,6 +42,12 @@
         <option value="approach">Approach / retreat (scale)</option>
         <option value="shaky">Shaky hold ("not anchored when moving")</option>
         <option value="orbit">Orbit loop (continuous)</option>
+        <option value="vertpan">Vertical pan (poster exits top/bottom)</option>
+        <option value="tilt">Tilt up/down (pure rotation, no baseline)</option>
+        <option value="yaw">Yaw left/right (pure rotation, no baseline)</option>
+        <option value="roll">Roll ±40° (portrait ↔ landscape)</option>
+        <option value="arc">Arc around content (±70°, oblique poster)</option>
+        <option value="overhead">Overhead inspection (look down ~60°)</option>
       </select>
     </label>
     <label>Pixel noise σ <span class="val" id="vNoise">2</span>
@@ -132,12 +138,26 @@
       // (noise/shake/gyro) between runs — seed=0 reproduces the canonical
       // baseline EXACTLY. label is echoed back in metrics for run tracking.
       seed: qNum('seed', 0),
+      tex: qNum('tex', 1),           // environment texture richness (specks
+                                     // x contrast); 1 = classic scene
       label: Q.get('label') || '',
       imu: Q.get('imu') !== '0',     // &imu=0 -> fusion runs vision-only
+      hic: qNum('hic', 0),           // &hic=K: every Kth frame arrives after a
+                                     // 3-frame-time gap (models the on-device
+                                     // heavy-detect stall: Pixel 6a's 154ms
+                                     // frame = ~3x the 20Hz interval - the
+                                     // camera keeps moving, the pipeline sees
+                                     // one giant inter-frame displacement)
       autoRun: Q.get('run') === '1',
-      pipeCfg: null                  // ?cfg=<url-encoded JSON> -> worker init config
+      // &snap=124,126: stash the DEGRADED frame (exactly what the worker
+      // sees) at those ref indices as PNG dataURLs in window.__SNAPS__ -
+      // ground truth for "what was actually in the image" disputes.
+      snap: (Q.get('snap') || '').split(',').filter(Boolean).map(Number),
+      pipeCfg: null,                 // ?cfg=<url-encoded JSON> -> worker init config
+      fusionCfg: null                // ?fcfg=<url-encoded JSON> -> FusionEngine config
     }
     try { if (Q.get('cfg')) CFG.pipeCfg = JSON.parse(Q.get('cfg')) } catch (e) { console.warn('[SIM] bad ?cfg= ignored:', e) }
+    try { if (Q.get('fcfg')) CFG.fusionCfg = JSON.parse(Q.get('fcfg')) } catch (e) { console.warn('[SIM] bad ?fcfg= ignored:', e) }
 
     const logEl = document.getElementById('log')
     const checks = []
@@ -153,7 +173,10 @@
     }
 
     // ---------------- camera model (must match worker intrinsics) ----------------
-    const W = 480, H = 360
+    // ?px= sets the processing width (SDK maxDimension analog): pose error
+    // scales ~1/focal ~ 1/resolution - the deployable accuracy multiplier.
+    const W = Math.max(320, Math.min(1280, qNum('px', 480)))
+    const H = Math.round(W * 0.75)
     const F = W / (2 * Math.tan(Math.PI / 6))        // 60° horizontal
     const FOV_V = 2 * Math.atan(H / (2 * F)) * 180 / Math.PI
     const INTRINSICS = { fx: F, fy: F, cx: W / 2, cy: H / 2 }
@@ -168,10 +191,18 @@
       const ctx = c.getContext('2d')
       let s = seed >>> 0
       const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
-      // mid-grey base + dense high-contrast specks => lots of ORB corners
+      // mid-grey base + dense high-contrast specks => lots of ORB corners.
+      // ?tex= scales BOTH speck density and contrast (tex=1 byte-identical
+      // to the classic texture): the environment axis that separated the
+      // three verdict sources (sim rich / test-slam smooth / phone real) -
+      // low-texture rooms are where corner detectors genuinely differ.
+      const tex = CFG.tex
+      const nSpecks = Math.round(340 * tex)
+      const mix = tex >= 1 ? 1 : tex          // contrast compression below 1
       ctx.fillStyle = '#6e6e6e'; ctx.fillRect(0, 0, c.width, c.height)
-      for (let i = 0; i < 340; i++) {
-        const g = Math.floor(rnd() * 255)
+      for (let i = 0; i < nSpecks; i++) {
+        let g = Math.floor(rnd() * 255)
+        if (mix < 1) g = Math.round(110 + (g - 110) * mix)
         ctx.fillStyle = `rgb(${g},${g},${g})`
         ctx.fillRect(rnd() * c.width, rnd() * c.height, 3 + rnd() * 22, 3 + rnd() * 22)
       }
@@ -255,6 +286,57 @@
       orbit: { frames: 120, loop: true, fn(i) {
         const a = (i / 120) * Math.PI * 2
         return { pos: [Math.sin(a) * 0.9 + 0.3, 0.05, 1.35 + Math.cos(a) * 0.2], target: [0, 0, 0] }
+      } },
+      // ---- vertical / rotational coverage (the horizontal-only gap) ----
+      // Vertical mirror of fastpan: rise toward the ceiling, dip toward the
+      // floor; the poster exits through the TOP and BOTTOM of the frame
+      // (exit needs >21.7 deg vertically at this FOV - peaks reach ~25).
+      vertpan: { frames: 90, fn(i) {
+        const t = i / 89
+        const s = Math.sin(t * Math.PI * 2)
+        return { pos: [0.25, 0.03 + s * 1.1, 1.35], target: [0, s * 0.77, 0] }
+      } },
+      // Pure PITCH from a parked position: look up to the ceiling, back,
+      // down to the floor, back (~68 deg). Rotation produces NO baseline,
+      // so this is the honest "map has no insurance" case, vertically.
+      tilt: { frames: 100, fn(i) {
+        const t = i / 99
+        const s = Math.sin(t * Math.PI * 2)
+        return { pos: [0.25, 0.0, 1.15], target: [0, s * 2.0, 0.35] }
+      } },
+      // Pure YAW from a parked position: look right (~70 deg), back, left,
+      // back - the same zero-baseline physics as tilt, horizontally.
+      yaw: { frames: 100, fn(i) {
+        const t = i / 99
+        const s = Math.sin(t * Math.PI * 2)
+        return { pos: [0.25, 0.0, 1.15], target: [s * 2.4, 0, 0.35] }
+      } },
+      // Camera ROLL about the optical axis (portrait <-> landscape wobble,
+      // +/-40 deg). Poster stays centered - stresses KLT windows +
+      // homography under in-plane rotation, which nothing else covers.
+      roll: { frames: 80, fn(i) {
+        const t = i / 79
+        return { pos: [0.2, 0.02, 1.15], target: [0, 0, 0],
+                 roll: Math.sin(t * Math.PI * 2) * 0.7 }
+      } },
+      // True ARC around the CONTENT anchor (~0.35m in front of the poster):
+      // +/-70 deg sweep with a vertical bob, always facing the anchor - the
+      // "walk around the model" case. The poster stays in frame but gets
+      // extremely oblique at the extremes (PnP ill-conditioning).
+      arc: { frames: 120, fn(i) {
+        const t = i / 119
+        const th = Math.sin(t * Math.PI * 2) * 1.22
+        const R = 1.05
+        return { pos: [Math.sin(th) * R, Math.sin(th * 2) * 0.3, 0.35 + Math.cos(th) * R],
+                 target: [0, 0, 0.35] }
+      } },
+      // OVERHEAD inspection: rise ~1m and look down at the content at ~60
+      // deg, then return - strong vertical foreshortening (tabletop view).
+      overhead: { frames: 90, fn(i) {
+        const t = i / 89
+        const lift = Math.sin(t * Math.PI)
+        return { pos: [0.28, 0.05 + lift * 0.95, 1.4 - lift * 0.55],
+                 target: [0, -lift * 0.25, 0.15] }
       } }
     }
 
@@ -267,10 +349,15 @@
     }
 
     const _scratchCam = new THREE.PerspectiveCamera(FOV_V, W / H, 0.01, 50)
+    // Trajectories are authored in REF_HZ frames. visionHz changes the
+    // SAMPLING DENSITY of the same physical path, not the camera speed -
+    // without this, "hz=60" silently meant "move 3x faster".
+    const REF_HZ = 20
+    const refIndex = (fracI) => fracI * REF_HZ / CFG.visionHz
     // Ground-truth pose (position + quaternion) at continuous frame fracI,
     // INCLUDING shake — the camera physically is here, so this is truth.
     function gtPose(fracI, traj) {
-      const base = traj.fn(fracI)
+      const base = traj.fn(refIndex(fracI))
       const tSec = fracI / CFG.visionHz
       const amp = CFG.shake / 1000
       const pos = [
@@ -286,6 +373,8 @@
       ]
       _scratchCam.position.set(pos[0], pos[1], pos[2])
       _scratchCam.lookAt(tgt[0], tgt[1], tgt[2])
+      // in-plane camera roll (rotation about the optical axis)
+      if (base.roll) _scratchCam.rotateZ(base.roll)
       _scratchCam.updateMatrixWorld(true)
       return { pos, quat: _scratchCam.quaternion.clone() }
     }
@@ -423,10 +512,11 @@
     let RUNNING = false
     async function runTrajectory(scene, worker, traj, opts) {
       opts = opts || {}
-      const N = traj.frames
+      // same physical path + duration regardless of vision rate
+      const N = Math.round(traj.frames * CFG.visionHz / REF_HZ)
       const visionDt = 1000 / CFG.visionHz, renderDt = 1000 / 60
 
-      const fusion = new FusionEngine()
+      const fusion = new FusionEngine(CFG.fusionCfg)
       const imuSim = { isActive: CFG.imu, hasData: () => CFG.imu, rawQuaternion: { x: 0, y: 0, z: 0, w: 1 } }
       fusion.setIMUProvider(imuSim)
       const gyroRng = makeRng(7 + CFG.seed * 31)
@@ -443,21 +533,40 @@
 
       const rows = [], gtPath = [], rawPath = [], fusPath = []
       let renderClock = 0
-      const fusedErrs = []      // {i, e}
+      const fusedErrs = []      // {i, e, re}
+      // REALISTIC DELIVERY: a vision correction only becomes available
+      // proc_ms after capture (the sim used to deliver at capture time,
+      // hiding exactly the latency this metric battery measures). A QUEUE,
+      // not a slot: at high vision rates proc can exceed the frame interval
+      // and a single slot silently dropped corrections.
+      const pendingCorrs = []   // [{pose, tc, deliverAt}] in capture order
+      let lastDeliveredCapT = null
+      const poseAges = []       // ms: render tick - capture time of newest absorbed pose
       const gtScratch = new THREE.Vector3()
 
-      for (let i = 0; i < N && (opts.live ? RUNNING : true); i++) {
+      // tv: trajectory time cursor in vision-frame units. Without hiccups
+      // tv === i. With &hic=K, every Kth frame is preceded by a 3-frame-time
+      // gap (tv jumps +3): the camera has moved three intervals' worth while
+      // the "stalled" frame processed - same physical path, fewer samples.
+      let tv = 0
+      for (let i = 0; tv < N && (opts.live ? RUNNING : true); i++) {
         // Liveness beacon: the orchestrator's stall watchdog reads this -
         // a frame counter that stops advancing means the run is wedged.
         window.__SIM_PROGRESS__ = { frame: i, total: N, t: Date.now() }
-        const Ti = i * visionDt
+        const Ti = tv * visionDt
 
         // --- advance the 60Hz fusion/render clock up to this vision frame,
         //     scoring the FUSED (on-screen) pose against GT at each tick ---
         while (renderClock <= Ti) {
           const fracTick = renderClock / visionDt
           setImuAt(fracTick)
+          while (pendingCorrs.length && renderClock >= pendingCorrs[0].deliverAt) {
+            const pc = pendingCorrs.shift()
+            fusion.pushVisionPose(pc.pose, pc.tc)
+            lastDeliveredCapT = pc.tc
+          }
           const fp = fusion.getRenderPose(renderClock)
+          if (fp.tracking && lastDeliveredCapT != null) poseAges.push(renderClock - lastDeliveredCapT)
           if (fp.tracking && fracTick <= N) {
             const g = gtPose(fracTick, traj)
             const e = Math.hypot(fp.position.x - g.pos[0], fp.position.y - g.pos[1], fp.position.z - g.pos[2])
@@ -473,13 +582,19 @@
         }
 
         // --- render the degraded frame and run the REAL vision worker ---
-        if (traj.teleportAt !== undefined) scene.userData.poster.visible = i < traj.teleportAt
-        const gp = gtPose(i, traj)
+        if (traj.teleportAt !== undefined) scene.userData.poster.visible = refIndex(tv) < traj.teleportAt
+        const gp = gtPose(tv, traj)
         const vis = posterVisible(gp.quat, gp.pos)
-        const img = renderDegraded(scene, i, traj)
+        const img = renderDegraded(scene, tv, traj)
         if ((i % 2) === 0) previewCtx.putImageData(img, 0, 0)
+        if (CFG.snap.length && CFG.snap.includes(Math.round(refIndex(tv)))) {
+          const sc = document.createElement('canvas')
+          sc.width = W; sc.height = H
+          sc.getContext('2d').putImageData(img, 0, 0)
+          ;(window.__SNAPS__ = window.__SNAPS__ || {})[Math.round(refIndex(tv))] = sc.toDataURL('image/png')
+        }
 
-        const r = await worker.send({ type: 'frame', imageData: img, id: i + 1, intrinsics: INTRINSICS }, [img.data.buffer])
+        const r = await worker.send({ type: 'frame', imageData: img, id: i + 1, intrinsics: INTRINSICS, ts: Ti }, [img.data.buffer])
 
         // raw vision error vs GT
         let posErr = null, rotErr = null
@@ -490,18 +605,35 @@
           rotErr = 2 * Math.acos(Math.min(1, Math.abs(q.dot(gp.quat)))) * 180 / Math.PI
         }
 
-        // --- feed fusion: snapshot IMU at capture time, then the correction ---
-        setImuAt(i)
+        // --- feed fusion: snapshot IMU at capture time; the correction is
+        //     QUEUED and delivered proc_ms later (realistic latency) ---
+        setImuAt(tv)
         fusion.saveSnapshot(i + 1, imuSim.rawQuaternion, Ti)
-        if (r && r.detected && r.pose) { r.pose.id = i + 1; fusion.pushVisionPose(r.pose, Ti) }
-        else fusion.notifyMiss()
+        const dd = r && r.debug ? r.debug : {}
+        if (r && r.detected && r.pose) {
+          r.pose.id = i + 1
+          pendingCorrs.push({ pose: r.pose, tc: Ti, deliverAt: Ti + Math.max(1, dd.proc_ms || 5) })
+        } else fusion.notifyMiss()
 
-        const d = r && r.debug ? r.debug : {}
+        const d = dd
         rows.push({ i, vis, detected: !!(r && r.detected), state: d.state || '?', mode: d.mode || '?',
           mapPts: d.map_points || 0, dormant: d.map_dormant || 0, drift: d.reacquire_drift_m,
           bridged: d.map_frames_bridged, proc: d.proc_ms || 0, fast: d.fast_thresh, noise: d.noise_px,
           cands: d.map_cands || 0, strong: d.strong || 0, reproj: d.reproj, inliers: d.inliers || 0,
           mapDbg: d.map_dbg,
+          mLk: d.m_lk || 0, mCull: d.m_cull || 0, mPurge: d.m_purge || 0,
+          mTri: d.m_tri || 0, mHarv: d.m_harv || 0, sd: d.sd, mCd: d.m_cd,
+          drmR: d.drm_refresh, chNcc: d.chain_ncc, chKill: d.chain_kill,
+          dC: d.drift_comp, lkD: d.lk_diff,
+          tm: (d.t_lk || d.t_pnp) ? [
+            'lk' + (d.t_lk || 0).toFixed(1),
+            d.t_sp != null ? 'sp' + d.t_sp.toFixed(1) : null,
+            d.t_fit != null ? 'fit' + d.t_fit.toFixed(1) : null,
+            d.t_pnp != null ? 'pnp' + d.t_pnp.toFixed(1) : null,
+            d.t_map != null ? 'map' + d.t_map.toFixed(1) : null,
+            d.t_mnt != null ? 'mnt' + d.t_mnt.toFixed(1) : null,
+            d.det_match_ms != null ? 'dm' + d.det_match_ms : null
+          ].filter(Boolean).join('|') : undefined,
           posErr, rotErr })
 
         // paths + live HUD
@@ -527,9 +659,12 @@
           })
           drawPlot(gtPath, rawPath, fusPath, [])
         }
+
+        // hiccup: the NEXT processed frame arrives 3 frame-times later
+        tv += (CFG.hic > 0 && ((i + 1) % CFG.hic === 0)) ? 3 : 1
       }
       window.__SIM_ROWS__ = rows   // diagnostic surface for &dump=1
-      return { rows, fusedErrs, traj }
+      return { rows, fusedErrs, poseAges, traj }
     }
 
     // ============================================================
@@ -537,8 +672,8 @@
     //  under the DEFAULT degradation profile.
     // ============================================================
     function analyze(res) {
-      const { rows, fusedErrs, traj } = res
-      const N = traj.frames
+      const { rows, fusedErrs, poseAges, traj } = res
+      const N = rows.length   // actual frames run (scaled by visionHz)
       const med = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[s.length >> 1] : null }
       const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))] : 0 }
       const avg = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0
@@ -612,12 +747,25 @@
         })(),
         procP50Ms: r2(pct(allProc, 0.5)),
         procP95Ms: r2(pct(allProc, 0.95)),
+        // pose age: how STALE the newest absorbed vision pose is at each
+        // rendered frame (capture->render latency incl. proc + frame gap)
+        poseAgeP50Ms: poseAges && poseAges.length ? r2(pct(poseAges, 0.5)) : null,
+        poseAgeP90Ms: poseAges && poseAges.length ? r2(pct(poseAges, 0.9)) : null,
         lostFrames: rows.filter(x => x.state === 'LOST').length,
+        // reloc snap accuracy (GOALS G6): pose error AT reacquisition
+        // frames - the frame that reported a drift metric has just snapped
+        // the pose back to poster truth, so its posErr IS the post-snap
+        // residual. null when the run had no reacquisitions.
+        relocSnapCm: (() => {
+          const rs = rows.filter(x => x.drift != null && x.posErr != null).map(x => x.posErr)
+          return rs.length ? r2(med(rs) * 100) : null
+        })(),
         timeline,
         profile: {
           traj: CFG.traj, noise: CFG.noise, blur: CFG.blur, shake: CFG.shake,
           expo: CFG.expo, gyro: CFG.gyro, visionHz: CFG.visionHz,
-          seed: CFG.seed, label: CFG.label, imu: CFG.imu ? 1 : 0
+          seed: CFG.seed, label: CFG.label, imu: CFG.imu ? 1 : 0, px: W,
+          hic: CFG.hic, tex: CFG.tex
         },
         cfg: CFG.pipeCfg || null
       }
@@ -712,7 +860,16 @@
           cnd: x.cands, drm: x.dormant, strong: x.strong,
           rj: x.reproj != null ? x.reproj : null, nz: x.noise != null ? x.noise : null,
           pe: x.posErr != null ? Math.round(x.posErr * 1000) / 10 : null,
-          vis: x.vis ? 1 : 0, dbg: x.mapDbg || undefined
+          vis: x.vis ? 1 : 0, pc: Math.round(x.proc),
+          dbg: [x.mapDbg, x.sd ? 'sd[' + x.sd + ']' : null,
+                x.mCd ? 'CD[' + x.mCd + ']' : null,
+                x.drmR ? 'dR' + x.drmR : null,
+                x.dC ? 'DC[' + x.dC + ']' : null,
+                x.lkD ? 'LKD[' + x.lkD + ']' : null,
+                x.tm ? 'tm[' + x.tm + ']' : null,
+                x.chKill ? 'CHKILL' + (x.chNcc != null ? '@' + x.chNcc : '') : null]
+            .filter(Boolean).join(' ') || undefined,
+          lk: x.mLk, cu: x.mCull, pu: x.mPurge, tr: x.mTri, hv: x.mHarv
         }))
       }
     }

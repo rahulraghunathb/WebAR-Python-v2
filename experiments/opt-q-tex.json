@@ -1,0 +1,13 @@
+{
+  "name": "opt-q-tex",
+  "description": "mapDensity2 low-texture guard: at tex 0.6 fast9 yields fewer corners, and the denser per-cell budget must not admit junk that dies in KLT or regress the low-tex hold that fast9 v2 won. slam only, discriminating band.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20, "traj": "slam", "tex": 0.6 },
+  "grid": {},
+  "seeds": 12,
+  "configs": {
+    "stack": {},
+    "dens2": { "mapDensity2": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

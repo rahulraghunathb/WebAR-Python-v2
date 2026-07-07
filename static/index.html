@@ -376,37 +376,6 @@
           </div>
         </div>
 
-        <div class="info-section">
-          <div class="info-section-title">📱 IMU Sensors</div>
-          <div class="info-row">
-            <span class="info-label">Status</span>
-            <span class="info-value" id="infoImuStatus">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Alpha (Z)</span>
-            <span class="info-value" id="infoImuAlpha">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Beta (X)</span>
-            <span class="info-value" id="infoImuBeta">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Gamma (Y)</span>
-            <span class="info-value" id="infoImuGamma">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Linear Accel</span>
-            <span class="info-value" id="infoImuAccel">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Velocity</span>
-            <span class="info-value" id="infoImuVel">-</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Rotation Δ</span>
-            <span class="info-value" id="infoImuDelta">-</span>
-          </div>
-        </div>
       </div>
 
       <div class="start-overlay" id="startOverlay">
@@ -414,7 +383,6 @@
         <div class="start-subtitle" id="startStatus">Initializing...</div>
         <div class="permission-status" id="permissionStatus">
           <div class="permission-item" id="permCamera">⏳ Camera</div>
-          <div class="permission-item" id="permMotion">⏳ Motion Sensors</div>
           <div class="permission-item" id="permServer">
             ⏳ Vision Engine (WASM)
           </div>
@@ -430,7 +398,6 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="/static/js/camera.js"></script>
     <script src="/static/js/camera-intrinsics.js"></script>
-    <script src="/static/js/device-motion.js"></script>
     <script src="/static/js/model-renderer.js"></script>
     <script src="/static/sdk/core/fusion.js"></script>
     <script src="/static/sdk/webar-sdk.js"></script>
@@ -469,10 +436,12 @@
           this.intrinsicsManager = new CameraIntrinsicsManager()
           this.cameraManager = new CameraManager()
           this.modelRenderer = new ModelRenderer("threeCanvas")
-          this.imuManager = new DeviceMotionManager()
 
-          // Phase 2: latency-compensated vision+IMU fusion (owns smoothing,
-          // prediction and loss handling; renderer delegates to it)
+          // Phase 2: latency-compensated fusion engine (owns smoothing,
+          // velocity prediction and loss handling; renderer delegates to
+          // it). Runs VISION-ONLY: motion sensors were removed 2026-07-04 -
+          // measured tradeoff (results/imu-value-rot): position identical,
+          // rotation error 2-3x higher during fast motion.
           this.fusion = new FusionEngine()
           this.modelRenderer.setFusionEngine(this.fusion)
 
@@ -484,10 +453,19 @@
           // DEV-ONLY SLAM map visualization (?debug=map): point cloud +
           // camera trail. Off (production): zero extra work end to end.
           this.debugMap = params.get("debug") === "map"
-          // ?imu=0 -> run WITHOUT motion sensors (no permission prompt).
-          // Measured tradeoff (results/imu-value-rot): position identical,
-          // rotation error 2-3x higher during motion (0.8->2.1° median).
-          this.noImu = params.get("imu") === "0"
+          // ?cfg=<url-encoded JSON>: pipeline config overrides for ON-DEVICE
+          // A/B testing (same contract as sim.html) - e.g.
+          // ?cfg={"splitDetect":true} or {"harvestKernel":true}. The applied
+          // override is rlogged so field logs are attributable to configs.
+          let cfgOverride = null
+          try {
+            if (params.get("cfg")) {
+              cfgOverride = JSON.parse(params.get("cfg"))
+              rlog("cfg-override", JSON.stringify(cfgOverride))
+            }
+          } catch (e) { rlog("cfg-override-error", String(e)) }
+          const pipelineConfig = Object.assign(
+            {}, this.debugMap ? { debugMap: true } : {}, cfgOverride || {})
           this.sdk = new WebARSDK({
             video: document.getElementById("videoElement"),
             targetUrl: customTarget
@@ -497,8 +475,11 @@
                   "/static/assets/ranger-base-image.jpg",
                 ],
             intrinsicsProvider: this.intrinsicsManager,
-            maxDimension: 480,
-            pipelineConfig: this.debugMap ? { debugMap: true } : null,
+            // 480 -> 720 (10x round): pose error scales ~1/resolution -
+            // measured raw 2.15 -> 0.83cm, rotation 0.76 -> 0.31 deg, proc
+            // +25%. Tracking cost is point-count-bound, not pixel-bound.
+            maxDimension: 720,
+            pipelineConfig: Object.keys(pipelineConfig).length ? pipelineConfig : null,
           })
           if (this.debugMap) this.modelRenderer.enableMapViz()
 
@@ -549,7 +530,6 @@
 
         updatePermissionUI(permissions) {
           const camEl = document.getElementById("permCamera")
-          const motionEl = document.getElementById("permMotion")
 
           if (permissions.camera) {
             camEl.textContent = "✓ Camera"
@@ -557,13 +537,6 @@
           } else {
             camEl.textContent = "✗ Camera (required)"
             camEl.classList.add("denied")
-          }
-
-          if (permissions.motion || permissions.orientation) {
-            motionEl.textContent = "✓ Motion Sensors"
-            motionEl.classList.add("granted")
-          } else {
-            motionEl.textContent = "○ Motion Sensors (optional)"
           }
         }
 
@@ -585,20 +558,20 @@
 
           this.sdk.on("result", (data) => this.handleResult(data))
 
-          // Snapshot IMU orientation per captured frame so the renderer can
-          // compute rotation deltas against the exact capture moment.
-          this.sdk.on("framesent", ({ id }) => {
-            if (this.imuManager.isActive && this.modelRenderer.saveIMUBaseline) {
-              this.modelRenderer.saveIMUBaseline(
-                id,
-                this.imuManager.rawQuaternion || this.imuManager.quaternion
-              )
-            }
+          // Record each frame's CAPTURE TIME so the fusion engine can apply
+          // vision corrections at the moment the frame was taken (latency
+          // compensation) - needed even without motion sensors.
+          this.sdk.on("framesent", ({ id, timestamp }) => {
+            this.fusion.saveSnapshot(id, null, timestamp || performance.now())
           })
 
           this.sdk.on("error", (err) => {
             console.error("[App] SDK error:", err)
             rlog("sdk-error", err && (err.stack || err.message) || err)
+          })
+
+          this.sdk.on("workerrestart", (info) => {
+            rlog("worker-restart", JSON.stringify(info))
           })
 
           try {
@@ -674,9 +647,12 @@
               visionFps: this.sdk.stats.fps,
               captureMs: this.sdk.stats.captureMs,
               renderFps: this.fps,
-              imu: this.imuManager.isActive,
-              imuData: this.imuManager.hasData(),
               fastT: this.debug.fast_thresh,
+              // map point-flow ledger (5s window shows only the last frame's
+              // counts, but bursts repeat - enough to spot the executioner)
+              mLk: this.debug.m_lk, mCull: this.debug.m_cull,
+              mPurge: this.debug.m_purge, mTri: this.debug.m_tri,
+              seed: this.debug.lk_seed,
             }))
           }
 
@@ -688,12 +664,6 @@
             this.pose = data.pose
             this.badge.classList.add("visible")
 
-            // Set IMU reference on first detection (for stability tracking)
-            if (this.imuManager.isActive && !this.imuManager.hasReference) {
-              this.imuManager.setReference()
-              console.log("[App] IMU reference set on first detection")
-            }
-
             // Update 3D renderer with 6DoF pose
             this.modelRenderer.updatePose(data.pose)
           } else {
@@ -704,11 +674,6 @@
             // misses and hides/resets itself only after its grace window.
             // (Hiding here on every miss caused flicker and a render crash.)
             this.modelRenderer.notifyLost()
-
-            // Clear IMU reference when tracking is lost
-            if (this.imuManager.hasReference) {
-              this.imuManager.clearReference()
-            }
           }
 
           // Update backend-dependent UI
@@ -718,35 +683,6 @@
         async start() {
           try {
             rlog("start-tapped")
-            // Request IMU permission first (MUST be in user gesture handler for iOS)
-            let imuGranted = false
-            if (this.noImu) {
-              rlog("imu-permission", "skipped (?imu=0 - vision-only mode)")
-            } else {
-              this.startStatus.textContent = "Requesting motion sensors..."
-              imuGranted = await this.imuManager.requestPermission()
-              rlog("imu-permission", imuGranted ? "granted" : "denied/unavailable")
-            }
-
-            // Update permission UI for IMU
-            const motionEl = document.getElementById("permMotion")
-            if (imuGranted) {
-              motionEl.textContent = "✓ Motion Sensors"
-              motionEl.classList.add("granted")
-              motionEl.classList.remove("denied")
-              console.log("[App] IMU permission granted")
-
-              // Connect IMU manager to renderer for sensor fusion
-              this.modelRenderer.setIMUManager(this.imuManager)
-            } else if (this.noImu) {
-              motionEl.textContent = "○ Motion Sensors (disabled by ?imu=0)"
-              console.log("[App] IMU disabled via ?imu=0 - vision-only")
-            } else {
-              motionEl.textContent = "✗ Motion Sensors"
-              motionEl.classList.add("denied")
-              console.log("[App] IMU permission denied or not available")
-            }
-
             this.startStatus.textContent = "Starting camera..."
 
             // Start camera with optimal settings
@@ -943,54 +879,6 @@
         updateLocalInfo() {
           // FPS
           document.getElementById("infoFps").textContent = this.fps
-
-          // IMU Status - distinguish "active" from "silently blocked"
-          // (Brave & co. attach listeners fine but never deliver events)
-          const imuBlocked = this.imuManager.isActive && !this.imuManager.hasData()
-          const statusEl = document.getElementById("infoImuStatus")
-          if (imuBlocked) {
-            statusEl.textContent = "BLOCKED (enable motion sensors)"
-            statusEl.style.color = "#fa0"
-          } else {
-            statusEl.textContent = this.imuManager.isActive ? "Active" : "Inactive"
-            statusEl.style.color = this.imuManager.isActive ? "#0f0" : "#888"
-          }
-
-          if (this.imuManager.isActive) {
-            const orient = this.imuManager.orientation
-            document.getElementById("infoImuAlpha").textContent =
-              orient.alpha.toFixed(1) + "°"
-            document.getElementById("infoImuBeta").textContent =
-              orient.beta.toFixed(1) + "°"
-            document.getElementById("infoImuGamma").textContent =
-              orient.gamma.toFixed(1) + "°"
-
-            // 6DoF Diagnostics
-            const acc = this.imuManager.linAccel
-              ? this.imuManager.linAccel.length()
-              : 0
-            const vel = this.imuManager.linVel
-              ? this.imuManager.linVel.length()
-              : 0
-            document.getElementById("infoImuAccel").textContent =
-              acc.toFixed(2) + " m/s²"
-            document.getElementById("infoImuVel").textContent =
-              vel.toFixed(2) + " m/s"
-
-            // Show rotation delta from reference if available
-            if (this.imuManager.hasReference) {
-              const rotMag = this.imuManager.getRotationMagnitude()
-              document.getElementById("infoImuDelta").textContent =
-                rotMag.toFixed(1) + "°"
-            } else {
-              document.getElementById("infoImuDelta").textContent = "No ref"
-            }
-          } else {
-            document.getElementById("infoImuAlpha").textContent = "-"
-            document.getElementById("infoImuBeta").textContent = "-"
-            document.getElementById("infoImuGamma").textContent = "-"
-            document.getElementById("infoImuDelta").textContent = "-"
-          }
         }
       }
 

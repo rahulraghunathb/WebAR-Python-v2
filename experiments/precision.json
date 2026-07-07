@@ -1,0 +1,16 @@
+{
+  "name": "precision",
+  "description": "Paired sweep: sub-pixel refiner variants + anchor density vs baseline (all with predictive fusion)",
+  "base": { "traj": "slam", "noise": 2, "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "hz": 20,
+            "fcfg": { "predictive": true } },
+  "grid": {},
+  "seeds": 5,
+  "configs": {
+    "baseline": {},
+    "v2": { "precisionV2": true, "subpixMinEig": 150, "subpixClamp": 1.5 },
+    "v2tight": { "precisionV2": true, "subpixMinEig": 400, "subpixClamp": 0.75 },
+    "v2dense": { "precisionV2": true, "subpixMinEig": 150, "subpixClamp": 1.5, "maxTrackPoints": 120 }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

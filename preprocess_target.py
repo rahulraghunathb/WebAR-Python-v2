@@ -21,6 +21,7 @@ import struct
 import time
 
 import cv2
+import numpy as np
 
 # Must match the SDK pipeline scales (static/sdk/vision/pipeline.js).
 # Sparse on purpose: ORB's internal 8-level pyramid covers intermediates.
@@ -55,8 +56,23 @@ def extract_pyramid(img, n_features):
         if desc is None or len(kp) < 4:
             print(f"  Scale {scale:.2f}: insufficient features, skipped")
             continue
+        # Sub-pixel refine the TARGET-side keypoints (precisionV2): the
+        # runtime refines the scene side of each correspondence onto its
+        # physical corner - the anchored pair is only consistent if the
+        # target side is refined onto the same corner too. ORB positions
+        # are pyramid-quantized (~0.5-1px); this removes that floor.
+        pts = np.array([k.pt for k in kp], dtype=np.float32).reshape(-1, 1, 2)
+        refined = cv2.cornerSubPix(
+            scaled, pts.copy(), (5, 5), (-1, -1),
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 8, 0.03))
+        # reject refinements that jumped onto a different corner (> 1.5px)
+        for i, k in enumerate(kp):
+            dx = refined[i, 0, 0] - pts[i, 0, 0]
+            dy = refined[i, 0, 1] - pts[i, 0, 1]
+            if dx * dx + dy * dy <= 2.25:
+                k.pt = (float(refined[i, 0, 0]), float(refined[i, 0, 1]))
         levels.append({"scale": scale, "keypoints": kp, "descriptors": desc})
-        print(f"  Scale {scale:.2f}: {len(kp)} keypoints")
+        print(f"  Scale {scale:.2f}: {len(kp)} keypoints (subpixel-refined)")
     return levels
 
 

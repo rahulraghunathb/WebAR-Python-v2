@@ -1,0 +1,13 @@
+{
+  "name": "opt-m",
+  "description": "Texture-axis battery: harvestKernel (with its <120-yield ORB fallback) vs base ORB harvest across environment richness. Single runs invert chaotically at low tex (tex=0.5 seed1: FAST held 100/ORB 19; test-slam's smooth room rolled the other way) - only P(hold) over seeds ranks detectors. slam = map stretch + teleport, the discriminating trajectory.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20, "traj": "slam" },
+  "grid": { "tex": [0.5, 0.65, 0.8, 1] },
+  "seeds": 6,
+  "configs": {
+    "base": {},
+    "hk": { "harvestKernel": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

@@ -1,0 +1,13 @@
+{
+  "name": "opt-g",
+  "description": "worker-split v2 A/B: splitDetect off vs on with the v2 pack (chainGuard+relocV2) in BOTH arms. v2 changes vs v1: fly-through/retry-roi detects stay synchronous (freeze-anchor bias class), stale-install guard (span cap 24px, strength bypass capped 2x), per-frame ring forwarding, same-frame-only installs.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "off": { "chainGuard": true, "relocV2": true },
+    "on": { "chainGuard": true, "relocV2": true, "splitDetect": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

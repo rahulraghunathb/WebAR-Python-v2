@@ -1,0 +1,9 @@
+{
+  "name": "bench",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"], "hz": [20, 60] },
+  "seeds": 4,
+  "configs": { "base": {} },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

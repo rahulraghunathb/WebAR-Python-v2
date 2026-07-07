@@ -207,7 +207,10 @@
 
         const r = await new Promise(res => {
           pending.set(i + 1, res)
-          worker.postMessage({ type: 'frame', imageData: img, id: i + 1, intrinsics: INTRINSICS },
+          // deterministic 20Hz timebase: without ts the pipeline falls back
+          // to worker-receive time, which is machine-load dependent and made
+          // this suite flip results run-to-run (via LK seed dtRatio)
+          worker.postMessage({ type: 'frame', imageData: img, id: i + 1, intrinsics: INTRINSICS, ts: (i + 1) * 50 },
             [img.data.buffer])
         })
 

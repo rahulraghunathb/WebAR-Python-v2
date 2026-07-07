@@ -78,11 +78,9 @@ class CameraIntrinsicsManager {
             'default': 60
         };
 
-        // Permission states
+        // Permission states (camera only - motion sensors removed 2026-07-04)
         this.permissions = {
-            camera: 'prompt',
-            motion: 'prompt',
-            orientation: 'prompt'
+            camera: 'prompt'
         };
 
         // Camera capabilities cache
@@ -101,34 +99,18 @@ class CameraIntrinsicsManager {
     }
 
     /**
-     * Request all necessary permissions for AR
+     * Request all necessary permissions for AR (camera only - the pipeline
+     * is vision-only; motion sensors were removed 2026-07-04)
      */
     async requestAllPermissions() {
         const results = {
-            camera: false,
-            motion: false,
-            orientation: false
+            camera: false
         };
 
-        // 1. Camera permission
         try {
             results.camera = await this._requestCameraPermission();
         } catch (e) {
             console.error('[Intrinsics] Camera permission failed:', e);
-        }
-
-        // 2. Device Motion permission (iOS 13+)
-        try {
-            results.motion = await this._requestMotionPermission();
-        } catch (e) {
-            console.log('[Intrinsics] Motion permission not available');
-        }
-
-        // 3. Device Orientation permission (iOS 13+)
-        try {
-            results.orientation = await this._requestOrientationPermission();
-        } catch (e) {
-            console.log('[Intrinsics] Orientation permission not available');
         }
 
         console.log('[Intrinsics] Permission results:', results);
@@ -161,32 +143,6 @@ class CameraIntrinsicsManager {
         stream.getTracks().forEach(t => t.stop());
 
         this.permissions.camera = 'granted';
-        return true;
-    }
-
-    async _requestMotionPermission() {
-        if (typeof DeviceMotionEvent === 'undefined') return false;
-
-        if (typeof DeviceMotionEvent.requestPermission === 'function') {
-            const permission = await DeviceMotionEvent.requestPermission();
-            this.permissions.motion = permission;
-            return permission === 'granted';
-        }
-
-        this.permissions.motion = 'granted';
-        return true;
-    }
-
-    async _requestOrientationPermission() {
-        if (typeof DeviceOrientationEvent === 'undefined') return false;
-
-        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-            const permission = await DeviceOrientationEvent.requestPermission();
-            this.permissions.orientation = permission;
-            return permission === 'granted';
-        }
-
-        this.permissions.orientation = 'granted';
         return true;
     }
 

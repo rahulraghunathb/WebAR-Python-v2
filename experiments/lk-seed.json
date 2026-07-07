@@ -1,0 +1,12 @@
+{
+  "name": "lk-seed",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "hz": 20, "px": 720 },
+  "grid": { "traj": ["slam", "fastpan"], "noise": [2, 6] },
+  "seeds": 6,
+  "configs": {
+    "baseline": {},
+    "seeded": { "lkPredictSeed": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

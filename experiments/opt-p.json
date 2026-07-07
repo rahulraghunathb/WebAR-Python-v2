@@ -1,0 +1,13 @@
+{
+  "name": "opt-p",
+  "description": "Fastpan map-thinness compensation: fast9 harvest is ~9x cheaper than ORB was, so the candidate budget can grow. stack vs stack+mapMaxCandidates 64 (cap was 40, tuned in the ORB-cost era). Judge mapPeak recovery vs any proc/error cost, fastpan only (the one trajectory paying the thinness).",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20, "traj": "fastpan" },
+  "grid": {},
+  "seeds": 8,
+  "configs": {
+    "stack": {},
+    "cand64": { "mapMaxCandidates": 64 }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

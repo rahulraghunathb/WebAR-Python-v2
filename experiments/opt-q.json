@@ -1,0 +1,13 @@
+{
+  "name": "opt-q",
+  "description": "mapDensity2: raise the harvest equilibrium (low-water 24, cadence 3/2, 3 per cell). Candidate ledger showed promotions healthy (120 vs 15 deaths) but the map plateaus ~40 and enters poster-exit at ~26: the ORB-era throttles set the equilibrium, and the SIMD kernel made points cheap. Seed-1 smoke: rawP90 4.37->2.87, exit drift 4.5->2.5cm plateau, proc flat. Judge tails (rawP90/fusedP90) on fastpan, guard slam P(hold)+proc and tilt rot-only interaction.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["fastpan", "slam", "tilt"] },
+  "seeds": 12,
+  "configs": {
+    "stack": {},
+    "dens2": { "mapDensity2": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

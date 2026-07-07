@@ -1,0 +1,13 @@
+{
+  "name": "opt-s",
+  "description": "purgeStrikes at stock density: 3-strike map purge (single-frame purge is the bad-basin spiral amplifier - truth points executed on one biased/noisy frame). Judge slam held tails (fusedP90/rawP90, the G2b/G6 physics) + lost frames; guard fastpan/tilt and the low-tex band. Risk: keeping real LK drifters 2 extra frames dilutes GN - watch medians.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["fastpan", "slam", "tilt"] },
+  "seeds": 12,
+  "configs": {
+    "stack": {},
+    "strikes": { "purgeStrikes": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

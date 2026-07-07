@@ -1,0 +1,13 @@
+{
+  "name": "opt-r",
+  "description": "edgeGate: poster viewing-geometry gate on map maintenance anchoring (refine/harvest/keyframes/driftComp). The mapDensity2 investigation proved edge-biased fits teach the map warped 3D (stock test-slam hold creeps 0.8->11cm; with edgeGate 7.2cm median and dens2's 50cm spiral collapses to 18cm). Judge held-window tails (fusedP90/rawP90) on slam+fastpan; guard tilt (rot-only) and mapPeak (maintenance freeze must not starve the map).",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["fastpan", "slam", "tilt"] },
+  "seeds": 12,
+  "configs": {
+    "stack": {},
+    "egate": { "edgeGate": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

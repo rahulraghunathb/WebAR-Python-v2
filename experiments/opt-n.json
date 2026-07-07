@@ -1,0 +1,13 @@
+{
+  "name": "opt-n",
+  "description": "THE STACK (harvestKernel + rotOnlyHuntFast + relocV3 keyframe-reloc/probation) vs previous defaults, standard trio. The stack passed test-slam 14/14 (first config with all three on to do so). Battery decides the default flip.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 6,
+  "configs": {
+    "base": { "harvestKernel": false, "rotOnlyHuntFast": false, "relocV3": false },
+    "stack": {}
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

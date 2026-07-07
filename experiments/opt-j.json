@@ -1,0 +1,13 @@
+{
+  "name": "opt-j",
+  "description": "fusionV2 (windowed weighted-LSQ velocity from capture-time vision history) vs the incremental innovation-increment estimator. Judge fusedMedian/fusedP90 - raw metrics must tie exactly (fusion never feeds back into vision).",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "base": {},
+    "fv2": { "fcfg": { "fusionV2": true } }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}

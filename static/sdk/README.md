@@ -2,7 +2,9 @@
 
 Client-side WebAR image tracking. All per-frame vision runs in a Web Worker
 (OpenCV WASM) — **no server in the frame loop**. A latency-compensated
-vision+IMU fusion engine produces render-rate (60Hz) poses.
+VISION-ONLY fusion engine produces render-rate (60Hz) poses (motion sensors
+removed 2026-07-04 — no permission prompts; measured cost was rotation
+smoothness only, position identical).
 
 - ~8ms/frame tracking (detect-then-track: ORB acquisition, forward-backward
   KLT + PnP while tracking)
@@ -25,10 +27,10 @@ vision+IMU fusion engine produces render-rate (60Hz) poses.
   })
 
   const fusion = new FusionEngine()
-  fusion.setIMUProvider(imuManager)               // optional, see device-motion.js
 
-  sdk.on('framesent', ({id}) =>
-    fusion.saveSnapshot(id, imuManager.rawQuaternion, performance.now()))
+  // capture-time snapshots drive the latency compensation
+  sdk.on('framesent', ({id, timestamp}) =>
+    fusion.saveSnapshot(id, null, timestamp || performance.now()))
   sdk.on('result', (r) => { if (r.detected && r.pose) fusion.pushVisionPose(r.pose) })
 
   await sdk.start()

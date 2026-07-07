@@ -1,0 +1,13 @@
+{
+  "name": "opt-l",
+  "description": "edgeHysteresis (weak-poster boundary band: enter MAP_TRACKING <30 inliers, poster retakes pose only >=38) vs base. Targets the field-log TRACKING<->MAP_TRACKING flapping at the view edge (6 transitions in 2.5s). Judge raw/fused parity; the win is state stability, visible in traces.",
+  "base": { "blur": 0.1, "shake": 1, "expo": 0.1, "gyro": 0.2, "px": 720, "noise": 2, "hz": 20 },
+  "grid": { "traj": ["slam", "fastpan", "tilt"] },
+  "seeds": 4,
+  "configs": {
+    "base": {},
+    "eh": { "edgeHysteresis": true }
+  },
+  "timeoutMs": 300000,
+  "stallMs": 60000
+}
